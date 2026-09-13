@@ -96,15 +96,21 @@ curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/up
 
 升级会保留订阅、规则和面板密码，并校验 Open-Box、sing-box、GeoSite / GeoIP 组件。相同且完整的组件直接复用，只有变化、缺失或损坏的组件才会从本仓库 Release 下载。
 
-### 降级到指定版本
+### 189 版回退到 188 版
 
-GitHub 上的历史 Release 可以直接作为降级目标。把下面命令中的版本号换成需要恢复的版本（例如 `v0.1.188`）：
+如果升级到 189 版后面板或内核异常，直接恢复上一个已经验证正常的 188 版。GitHub 直连执行：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/update.sh | sh -s -- --expect v0.1.188 --direct
 ```
 
-脚本会下载该版本对应架构的安装包，先校验 SHA256，再替换当前文件；校验或替换失败会保留现有安装，不会把旧版本一层层堆在路由器上。降级完成后，订阅、规则和面板密码仍会保留。历史版本的安装包会继续保留在 [GitHub Releases](https://github.com/liandu2024/Open-Box/releases)，因此以后仍可按同样方式切换回任意已发布版本。
+GitHub 访问不畅时，使用代理执行：
+
+```sh
+curl -fsSL https://gh-proxy.com/raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/update.sh | sh -s -- --expect v0.1.188 --mirror https://gh-proxy.com
+```
+
+两条命令都会下载对应架构的 188 安装包，先校验 SHA256，再替换当前文件；校验或替换失败会保留现有安装。回退后订阅、规则和面板密码仍会保留。
 
 ## 卸载
 
