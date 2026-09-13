@@ -94,6 +94,16 @@ curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/up
 
 升级会保留订阅、规则和面板密码，并校验 Open-Box、sing-box、GeoSite / GeoIP 组件。相同且完整的组件直接复用，只有变化、缺失或损坏的组件才会从本仓库 Release 下载。
 
+### 降级到指定版本
+
+GitHub 上的历史 Release 可以直接作为降级目标。把下面命令中的版本号换成需要恢复的版本（例如 `v0.1.188`）：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/update.sh | sh -s -- --expect v0.1.188 --direct
+```
+
+脚本会下载该版本对应架构的安装包，先校验 SHA256，再替换当前文件；校验或替换失败会保留现有安装，不会把旧版本一层层堆在路由器上。降级完成后，订阅、规则和面板密码仍会保留。历史版本的安装包会继续保留在 [GitHub Releases](https://github.com/liandu2024/Open-Box/releases)，因此以后仍可按同样方式切换回任意已发布版本。
+
 ## 卸载
 
 默认停止服务并保留订阅和配置数据：
