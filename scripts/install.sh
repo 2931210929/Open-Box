@@ -9,7 +9,7 @@
 #                                   # 例如 --mirror ghproxy.example.com
 #
 # 设计要点(修改本脚本时不要丢掉):
-# - 校验通过前绝不触碰 /opt:下载与 SHA256 校验都发生在临时目录,任何一步失败都
+# - 校验通过前绝不触碰 /opt/open-box 安装目录:下载与 SHA256 校验都发生在临时目录,任何一步失败都
 #   在临时目录里收场并以非零退出,系统保持零改动。
 # - 不生成随机密码:面板首次访问强制走"设置密码"流程(产品决策,见 P4b),这里
 #   只打印面板地址,提示用户首次打开需要设密码。
@@ -23,6 +23,11 @@ set -eu
 
 REPO="liandu2024/Open-Box"
 INSTALL_ROOT="/opt/open-box"
+# OpenWrt 的 /tmp 通常是 tmpfs，会把下载包直接计入运行内存。完整安装包约
+# 106MB，低内存路由器在面板/内核已经运行时下载它可能触发 OOM，表现为“死机”。
+# 下载临时目录默认放在 /opt 所在的持久化文件系统；需要时可用 OPENBOX_TMPDIR
+# 明确指定其它可写目录（例如外接存储）。校验通过前仍不会写入安装目录本身。
+TMP_PARENT="${OPENBOX_TMPDIR:-$(dirname -- "$INSTALL_ROOT")}"
 MIN_FREE_KB=$((512 * 1024))
 # 450000KB(≈440MB)而不是标称的 512*1024:512MB 设备的 /proc/meminfo MemTotal 实测
 # 只有约 480-500MB(内核保留了一部分),用 524288 卡阈值会把 README 宣称支持的
@@ -263,7 +268,7 @@ SHA_URL="$ASSET_URL.sha256"
 
 # ---------- 内置镜像列表(--mirror 不带前缀时使用)----------
 # 三个都是 2026-09-01 现场验证过的:能取到与直连字节级一致的 releases/latest 资产
-# (.sha256 与 78MB tarball 均验证过),也能代理 raw.githubusercontent.com。按此顺序
+# (.sha256 与 106MB tarball 均验证过),也能代理 raw.githubusercontent.com。按此顺序
 # 依次探测,选中第一个探测通过的——加速站是出了名的会挂,所以不能假设列表里第一个
 # 永远可用,必须能在探测失败时继续试下一个,而不是直接报错退出。update.sh 里维护
 # 着同一份列表(两边都是 curl | sh 单文件直跑,没有可共享的公共库文件,只能保持
@@ -285,7 +290,7 @@ fetch_to_file_probe() {
 }
 
 # 探测单个镜像前缀是否真的可用:请求发布资产的 .sha256 文件(几十字节,不是
-# 78MB 正文),并连内容一起校验格式(64 位十六进制哈希 + 空白 + 资产名)——失效
+# 106MB 正文),并连内容一起校验格式(64 位十六进制哈希 + 空白 + 资产名)——失效
 # 的加速站经常返回 200 状态的 HTML 错误页而不是网络层错误,只看 curl/wget 的
 # 退出码不够,必须验证内容,否则会把"死了但仍应答"的镜像误判为可用。
 probe_mirror_prefix() {
@@ -339,8 +344,10 @@ select_builtin_mirror() {
   die "内置镜像列表全部探测失败(已尝试:$tried)。可用 --mirror <前缀> 指定其它加速站,或不加 --mirror 直连。"
 }
 
-# ---------- 下载到临时目录(此时仍未触碰 /opt) ----------
-TMP_DL=$(mktemp -d "${TMPDIR:-/tmp}/open-box-install.XXXXXX") || die "无法创建临时目录。"
+# ---------- 下载到临时目录(此时仍未触碰安装目录) ----------
+# 目录放在安装根目录的同一持久化分区，避免把 106MB 压缩包塞进 /tmp tmpfs。
+mkdir -p "$TMP_PARENT" || die "无法创建下载临时目录父目录:$TMP_PARENT。"
+TMP_DL=$(mktemp -d "$TMP_PARENT/.open-box-install.XXXXXX") || die "无法创建临时目录。"
 trap 'safe_rm_rf "$TMP_DL"' EXIT INT TERM
 
 if [ "$CHANNEL" = "mirror" ] && [ -z "$MIRROR_PREFIX" ]; then

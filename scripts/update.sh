@@ -10,7 +10,7 @@
 #   sh update.sh --detach           # 派生一个后台子进程去真正执行升级,自己立即返回;
 #                                    # 输出被子进程重定向到 ${TMPDIR:-/tmp}/openbox-update.log。
 #                                    # 供 LuCI 兜底页一键升级调用——rpcd 的 fs.exec 有超时,
-#                                    # 而升级要下载约 78MB,同步调用必然中途超时;详见下方
+#                                    # 而升级要下载约 106MB,同步调用必然中途超时;详见下方
 #                                    # 自迁移小节的说明。可以和 --direct/--mirror 组合,
 #                                    # 例如 sh update.sh --detach --mirror。
 #   sh update.sh --cancel           # 请求取消一次正在运行的 --detach 升级。协作式:
@@ -38,9 +38,8 @@
 #                                    # 超时的风险,所以改成"一次 exec 只探测一个"。
 #
 # 不带 --direct/--mirror 时沿用安装时选择的下载通道(记录在 data/channel),这是
-# 保持向后兼容的默认行为。下载(到 /tmp)与 SHA256 校验都在临时目录完成;只有
-# 校验通过后,才把包解到 $INSTALL_ROOT 所在文件系统的暂存目录(不是 /tmp——/tmp
-# 常是 tmpfs,512MB 机器装不下解包后的体积,见 Important 3),再停服务、换文件。
+# 保持向后兼容的默认行为。下载与 SHA256 校验都在持久化分区的临时目录完成;只有
+# 校验通过后,才把包解到 $INSTALL_ROOT 所在文件系统的暂存目录,再停服务、换文件。
 # 任何一步失败都直接退出且不触碰现有安装。
 # 保留 data/(用户数据)与 etc/(部署出的运行配置),只替换 node/ panel/ bin/
 # openwrt/ 与 meta.json。内核和 Geo 数据按发布清单校验，相同版本复用，不重复下载。
@@ -50,11 +49,15 @@ set -eu
 
 REPO="liandu2024/Open-Box"
 INSTALL_ROOT="/opt/open-box"
+# /tmp 是 tmpfs，升级包当前约 106MB；在内核和面板运行时把它下载到 /tmp
+# 会额外消耗同等大小的运行内存，512MB 设备可能被 OOM killer 杀掉。默认改用
+# /opt 所在持久化分区，仍可通过 OPENBOX_TMPDIR 指定外接存储等其它目录。
+TMP_PARENT="${OPENBOX_TMPDIR:-$(dirname -- "$INSTALL_ROOT")}"
 # 升级要在安装目录所在分区暂存一份新的(两阶段换文件,新旧并存才能原子切换),装好的一份
 # 约 213MB,所以升级本身只需要约 213MB 空闲——不是安装那个 512MB(那是"装完还要留得下
 # 以后升级"的总量)。以前照抄 512MB 把只剩 495MB 的用户挡在升级门外(GitHub #11)。
 MIN_FREE_KB=$((300 * 1024))
-# /tmp 通常是 tmpfs(内存),这里只放下载下来的压缩包(实测约 78MB),留出安全余量;
+# 临时目录默认在持久化分区,这里只放下载下来的压缩包(实测约 106MB);
 # 解包目标不在这里(见下方 Important 3),所以这个阈值不需要覆盖解包后的体积。
 MIN_TMP_DOWNLOAD_KB=$((100 * 1024))
 
@@ -199,7 +202,7 @@ build_url() {
 }
 
 # 探测专用的下载函数:比 fetch_to_file 多加连接/总时长上限,避免探测阶段卡在一个
-# 已经死掉、只是不返回错误而是一直不响应的加速站上——真正下载 78MB 正文时仍用不
+# 已经死掉、只是不返回错误而是一直不响应的加速站上——真正下载 106MB 正文时仍用不
 # 限时的 fetch_to_file,不希望网络慢的用户被这里的短超时误伤。
 fetch_to_file_probe() {
   case "$DOWNLOADER" in
@@ -233,7 +236,7 @@ probe_content_length() {
 # 带进度上报、可取消的下载:把真正的下载子进程(curl/wget 本体,不是套一层
 # subshell——这样 $! 拿到的就是它自己的 PID,kill 才打得准)放到后台,前台每秒
 # 醒一次,拿正在写的目标文件当前大小去更新状态文件(bytes/total),同时检查取消
-# 标志。这个循环是"下载阶段响应取消"的唯一实现——78MB 在慢网络上要跑很久,不能
+# 标志。这个循环是"下载阶段响应取消"的唯一实现——106MB 在慢网络上要跑很久,不能
 # 等它整个 fetch_to_file() 跑完才有机会检查取消。
 #
 # 参数:$1 = URL,$2 = 目标文件路径,$3 = 总字节数(可能是空字符串,即未知)。
@@ -297,7 +300,7 @@ download_with_progress() {
 }
 
 # 探测单个"渠道"是否真的可用:candidate 为 "direct" 时探测 GitHub 直连,其它值当
-# 镜像前缀探测。请求发布资产的 .sha256 文件(几十字节,不是 78MB 正文),并连内容
+# 镜像前缀探测。请求发布资产的 .sha256 文件(几十字节,不是 106MB 正文),并连内容
 # 一起校验格式(64 位十六进制哈希 + 空白 + 资产名)——失效的加速站经常返回 200
 # 状态的 HTML 错误页而不是网络层错误,只看 curl/wget 的退出码不够,必须验证内容,
 # 否则会把"死了但仍应答"的镜像误判为可用。
@@ -337,18 +340,18 @@ probe_mirror_prefix() {
 # 要把 node/ panel/ bin/ openwrt/ 整棵目录树连同 meta.json 一起换掉,而本脚本自己
 # 现在也活在这棵目录树里——busybox ash 是边读边执行脚本文件的,自己在跑的时候被
 # 自己即将执行的替换逻辑动到,属于自找麻烦(与 uninstall.sh 同一个坑,解法照抄:
-# 发现自己在安装目录里,先复制到 /tmp 再从那里重新执行;原地那份和目录一起被替换
+# 发现自己在安装目录里,先复制到安装目录所在持久化分区的临时目录再重新执行;原地那份和目录一起被替换
 # 掉即可)。
 #
 # 这里比 uninstall.sh 多一层:--detach 会再 fork 一次真正干活的子进程(见下方),
-# 所以"跑完删除 /tmp 副本"这件事不能在这里的 case 分支里一次性做完——挪到下面与
+# 所以"跑完删除临时副本"这件事不能在这里的 case 分支里一次性做完——挪到下面与
 # STAGE_DIR/TMP_DL 共用的 cleanup() trap 里,只在真正执行升级逻辑的那个进程(前台
 # 同步调用,或者 --detach 派生出的后台子进程)退出时才删除,派发进程本身提前退出、
 # 不动这个文件,避免删掉后台子进程还在读的脚本。
 #
 # --probe 与 --cancel 都是"只读/一次性副作用"的快速分支(--probe 不改动任何文件;
 # --cancel 至多创建一个标志文件),不会替换脚本自身或安装目录下的任何文件,不需要
-# 走这套自迁移逻辑——走了反而会在 /tmp 留下一份从不清理的脚本拷贝:自迁移拷贝的
+# 走这套自迁移逻辑——走了反而会留下一份从不清理的脚本拷贝:自迁移拷贝的
 # 清理挂在"真正执行升级逻辑"的 cleanup() trap 里,这两个分支用的都是自己更早的
 # exit 路径,够不到那个 trap。这里先对 "$@" 做一次极简预扫描(不消费参数,不影响
 # 下面正式的参数解析),扫到 --probe 或 --cancel 就跳过自迁移。
@@ -367,8 +370,9 @@ done
 if [ "$_probe_or_cancel_scan" != "1" ] && [ "${OPENBOX_UPDATE_RELOCATED:-0}" != "1" ]; then
   case "$0" in
     "$INSTALL_ROOT"/*)
-      _self_copy="/tmp/openbox-update.$$.sh"
-      cp -f -- "$0" "$_self_copy" || die "无法把升级脚本复制到 /tmp,请改用:wget -O- <脚本地址> | sh"
+      mkdir -p "$TMP_PARENT" || die "无法创建升级脚本临时目录父目录:$TMP_PARENT。"
+      _self_copy="$TMP_PARENT/.openbox-update.$$.sh"
+      cp -f -- "$0" "$_self_copy" || die "无法把升级脚本复制到临时目录:$TMP_PARENT,请改用:wget -O- <脚本地址> | sh"
       chmod +x "$_self_copy" 2>/dev/null || true
       OPENBOX_UPDATE_RELOCATED=1
       export OPENBOX_UPDATE_RELOCATED
@@ -626,7 +630,7 @@ fi
 
 # ---------- --detach:派生后台子进程,自己立即返回 ----------
 # LuCI 一键升级通过 rpcd 的 fs.exec 调用本脚本;fs.exec 是同步等待且有超时的,
-# 升级却要下载约 78MB,同步跑必然中途被杀。所以 --detach 分支只做一件事:再拉起
+# 升级却要下载约 106MB,同步跑必然中途被杀。所以 --detach 分支只做一件事:再拉起
 # 一份自己(不带 --detach,避免无限递归),输出重定向到日志文件,然后立刻退出——
 # fs.exec 几乎瞬间就能返回,真正的下载/替换在后台独立进程里进行,LuCI 页面转而
 # 轮询 meta.json 的版本号与这份日志。原有的 --direct/--mirror 选择通过环境变量
@@ -743,12 +747,12 @@ check_storage() {
   fi
 }
 
-# /tmp 常见是 tmpfs(内存),只用来放下载下来的压缩包,不在这里解包(见 Important
-# 3);仍然值得单独测一下,避免连下载都放不下就走到后面才失败。检测失败时不阻断
+# 临时目录默认在持久化分区,不在这里解包(见 Important 3);仍然值得单独测一下,
+# 避免连下载都放不下就走到后面才失败。检测失败时不阻断
 # (df 在个别精简系统上可能对某些挂载点报错),只是提前警示,交给后面真正的下载步骤
 # 决定成败。
 check_tmp_space() {
-  tmp_base="${TMPDIR:-/tmp}"
+  tmp_base="$TMP_PARENT"
   kb=$(free_space_kb_for "$tmp_base")
   case "$kb" in
     ''|*[!0-9]*)
@@ -757,7 +761,7 @@ check_tmp_space() {
       ;;
   esac
   if [ "$kb" -lt "$MIN_TMP_DOWNLOAD_KB" ]; then
-    die "$tmp_base 可用空间不足(约 $((kb / 1024))MB),下载升级包(约 80MB)可能会失败。请清理 $tmp_base,或设置 TMPDIR 指向空间更充足的目录后重试。"
+    die "$tmp_base 可用空间不足(约 $((kb / 1024))MB),下载和暂存升级包可能会失败。请清理 $tmp_base,或设置 OPENBOX_TMPDIR 指向空间更充足的目录后重试。"
   fi
 }
 
@@ -878,7 +882,7 @@ OLD_VERSION=$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' "$INSTALL_ROOT/meta.
 
 # ---------- 内置镜像列表(--mirror 不带前缀时使用)----------
 # 三个都是 2026-09-01 现场验证过的:能取到与直连字节级一致的 releases/latest 资产
-# (.sha256 与 78MB tarball 均验证过),也能代理 raw.githubusercontent.com。按此顺序
+# (.sha256 与 106MB tarball 均验证过),也能代理 raw.githubusercontent.com。按此顺序
 # 依次探测,选中第一个探测通过的——加速站是出了名的会挂,所以不能假设列表里第一个
 # 永远可用,必须能在探测失败时继续试下一个,而不是直接报错退出。install.sh 里维护
 # 着同一份列表(两边都是 curl | sh 单文件直跑,没有可共享的公共库文件,只能保持
@@ -944,7 +948,8 @@ cleanup() {
   [ -n "${UPDATE_LOCK:-}" ] && rm -rf "$UPDATE_LOCK" 2>/dev/null
   return 0
 }
-TMP_DL=$(mktemp -d "${TMPDIR:-/tmp}/open-box-update.XXXXXX") || die "无法创建临时目录。"
+mkdir -p "$TMP_PARENT" || die "无法创建下载临时目录父目录:$TMP_PARENT。"
+TMP_DL=$(mktemp -d "$TMP_PARENT/.open-box-update.XXXXXX") || die "无法创建临时目录。"
 trap cleanup EXIT INT TERM
 
 # 从这里开始,cleanup() trap 已经注册好(TMP_DL 已创建)——检查点可以放心
@@ -956,7 +961,7 @@ if [ "$CHANNEL" = "mirror" ] && [ -z "$MIRROR_PREFIX" ]; then
   select_builtin_mirror
 fi
 
-# releases/latest/download/<资产> 是个**会动的指针**:78MB 正文要下几分钟,几十字节的
+# releases/latest/download/<资产> 是个**会动的指针**:106MB 正文要下几分钟,几十字节的
 # .sha256 是另一次请求。两次请求之间只要发布了新版本,拿到的就是"旧正文 + 新校验和",
 # 校验必然失败。真机 192.168.3.35 上就这么失败过一次:v0.1.49 的包配上 v0.1.50 的
 # 校验和,报"SHA256 不匹配",而两个文件各自都是完好的。
@@ -1028,9 +1033,9 @@ if ! ( cd "$TMP_DL" && $SHA_TOOL $SHA_ARGS "$ASSET.sha256" >/dev/null ); then
 fi
 info "校验通过。"
 
-# ---------- 解包(校验通过之后才做,且解到 /opt 所在文件系统,不是 /tmp)----------
-# 实测:tarball 约 78MB,解开后约 204MB,合计约 282MB;512MB 设备的 tmpfs(/tmp)
-# 上限约 256MB,解在 /tmp 必然 ENOSPC——虽然会安全失败(校验已经通过,不会碰现有
+# ---------- 解包(校验通过之后才做,且解到 /opt 所在文件系统)----------
+# 实测:发布包约 106MB,解开后约 204MB;解包不使用 /tmp,避免 tmpfs 上限不足导致
+# ENOSPC——虽然会安全失败(校验已经通过,不会碰现有
 # 安装),但这一档机器永远升不了级。改到 $INSTALL_ROOT 所在文件系统的暂存目录,
 # 复用的是 flash/eMMC 而不是内存,且与"校验通过前不碰安装目录"的不变式并不冲突:
 # 暂存目录与正式安装目录是分开的路径,真正替换现有安装是最后一步(P6 终审

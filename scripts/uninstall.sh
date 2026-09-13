@@ -16,6 +16,10 @@ set -eu
 trap '' PIPE
 
 INSTALL_ROOT="/opt/open-box"
+# 卸载脚本需要先复制一份再删除自身所在目录。/tmp 在升级失败后可能已经被
+# 下载包占满，继续复制到 /tmp 会让“卸载重新安装也不行”变成死循环；默认放到
+# 安装目录所在的持久化分区，也允许用 OPENBOX_TMPDIR 指定其它可写位置。
+UNINSTALL_TMP_PARENT="${OPENBOX_TMPDIR:-$(dirname -- "$INSTALL_ROOT")}"
 PURGE=0
 
 info() { echo "[open-box] $*"; }
@@ -45,12 +49,13 @@ safe_rm_rf() {
 # 本脚本现在会随发布包铺到 /opt/open-box/uninstall.sh(LuCI 兜底页要能在没有外网
 # 时调起卸载)。但它接下来要删除的正是自己所在的目录——busybox ash 是边读边执行
 # 脚本文件的,删掉正在执行的文件属于自找麻烦。所以:若发现自己就在安装目录里,
-# 先把自己复制到 /tmp,再从那里重新执行,原地那份随目录一起被删掉即可。
+# 先把自己复制到安装目录旁的持久化临时目录,再从那里重新执行,原地那份随目录一起被删掉即可。
 if [ "${OPENBOX_UNINSTALL_RELOCATED:-0}" != "1" ]; then
   case "$0" in
     "$INSTALL_ROOT"/*)
-      _self_copy="/tmp/openbox-uninstall.$$.sh"
-      cp -f -- "$0" "$_self_copy" || die "无法把卸载脚本复制到 /tmp,请改用:wget -O- <脚本地址> | sh"
+      mkdir -p "$UNINSTALL_TMP_PARENT" || die "无法创建卸载临时目录父目录:$UNINSTALL_TMP_PARENT。"
+      _self_copy="$UNINSTALL_TMP_PARENT/.openbox-uninstall.$$.sh"
+      cp -f -- "$0" "$_self_copy" || die "无法复制卸载脚本到临时目录:$UNINSTALL_TMP_PARENT,请改用:wget -O- <脚本地址> | sh"
       chmod +x "$_self_copy" 2>/dev/null || true
       OPENBOX_UNINSTALL_RELOCATED=1
       export OPENBOX_UNINSTALL_RELOCATED
@@ -189,6 +194,14 @@ else
   echo "Open-Box 已卸载,数据保留在 $INSTALL_ROOT/data。"
   echo "如需完全删除,请重新执行: sh uninstall.sh --purge"
 fi
+
+# 安装/升级在断电或 OOM-kill 时可能来不及执行 EXIT trap，清理安装目录旁边留下的
+# 下载临时目录，避免下次安装因旧包占满持久化分区而再次失败。只匹配 Open-Box
+# 自己创建的隐藏目录，不碰用户在同一分区上的其它文件。
+for _tmp in "$UNINSTALL_TMP_PARENT"/.open-box-install.* "$UNINSTALL_TMP_PARENT"/.open-box-update.*; do
+  [ -e "$_tmp" ] || continue
+  safe_rm_rf "$_tmp"
+done
 
 # ---------- 最后才重启 rpcd,让 LuCI 忘掉已删除的页面 ----------
 # 到这里该删的都删完了,即使被 SIGPIPE 打死也不会留下半卸载。
