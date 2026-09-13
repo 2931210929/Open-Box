@@ -36,6 +36,8 @@
 #                                    # 页面侧对每个渠道各发起一次 fs.exec——rpcd 的
 #                                    # fs.exec 有超时,一次 exec 里探测全部渠道有拖到
 #                                    # 超时的风险,所以改成"一次 exec 只探测一个"。
+#   sh update.sh --rollback --direct       # 自动恢复到当前版本的上一个 GitHub Release
+#   sh update.sh --rollback --mirror <前缀> # 通过镜像自动恢复到上一个 GitHub Release
 #
 # 不带 --direct/--mirror 时沿用安装时选择的下载通道(记录在 data/channel),这是
 # 保持向后兼容的默认行为。下载与 SHA256 校验都在持久化分区的临时目录完成;只有
@@ -388,6 +390,7 @@ fi
 # 两两互斥;--detach 与 --probe/--cancel 也互斥(探测、取消都是同步的一次性调用,
 # 不存在"派生到后台"的意义)。
 DETACH=0
+ROLLBACK_MODE=0
 # 期望装到的版本(tag)。面板发起升级时会把它探到的最新 tag 传进来(--expect),
 # 派生到后台的子进程通过环境变量接力。有它就下载带版本号的资产
 # (releases/download/<tag>/open-box-<tag>-linux-<arch>.tar.gz):每个版本 URL 唯一,
@@ -441,6 +444,14 @@ while [ $# -gt 0 ]; do
       [ -z "$PROBE_CHANNEL" ] || die "--detach 不能与 --probe 同时使用。"
       [ "$CANCEL_MODE" = "0" ] || die "--detach 不能与 --cancel 同时使用。"
       DETACH=1
+      shift
+      ;;
+    --rollback)
+      [ "$DETACH" = "0" ] || die "--rollback 不能与 --detach 同时使用。"
+      [ "$CANCEL_MODE" = "0" ] || die "--rollback 不能与 --cancel 同时使用。"
+      [ -z "$PROBE_CHANNEL" ] || die "--rollback 不能与 --probe 同时使用。"
+      [ "$ROLLBACK_MODE" = "0" ] || die "--rollback 只能指定一次。"
+      ROLLBACK_MODE=1
       shift
       ;;
     --cancel)
@@ -505,7 +516,7 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     *)
-      die "未知参数:$1(可用参数:--detach、--direct、--mirror [前缀]、--probe <渠道>、--cancel)"
+      die "未知参数:$1(可用参数:--detach、--rollback、--direct、--mirror [前缀]、--probe <渠道>、--cancel)"
       ;;
   esac
 done
@@ -863,7 +874,41 @@ resolve_latest_tag() {
     wget) wget -q -O - --timeout=12 "$_rlt_url" 2>/dev/null | sed -n 's|.*/releases/tag/\(v[0-9][0-9A-Za-z._-]*\).*|\1|p' | head -n 1 ;;
   esac | sed -n 's/^[Ll]ocation: .*\/releases\/tag\/\(v[0-9][0-9A-Za-z._-]*\).*/\1/p; /^v[0-9][0-9A-Za-z._-]*$/p' | head -n 1
 }
-if [ -z "$EXPECT_VERSION" ]; then
+# Compare plain numeric semver tags without depending on sort -V (not available in
+# every BusyBox build). Returns success when $1 is older than $2.
+version_less_than() {
+  awk -v a="${1#v}" -v b="${2#v}" '
+    BEGIN {
+      na = split(a, aa, "."); nb = split(b, bb, ".");
+      for (i = 1; i <= 3; i++) {
+        av = (i <= na ? aa[i] + 0 : 0); bv = (i <= nb ? bb[i] + 0 : 0);
+        if (av < bv) exit 0;
+        if (av > bv) exit 1;
+      }
+      exit 1;
+    }'
+}
+
+# 从 GitHub 已发布的 Release 中找出当前版本的直接上一个版本。只接受
+# vMAJOR.MINOR.PATCH 形式的正式版本，自动跳过非版本标签。
+resolve_previous_tag() {
+  _rpt_current="$1"
+  _rpt_api="https://api.github.com/repos/$REPO/releases?per_page=100"
+  _rpt_json=$(fetch_to_stdout "$(build_url "$_rpt_api")") || return 1
+  _rpt_best=""
+  _rpt_tags=$(printf '%s' "$_rpt_json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p')
+  for _rpt_tag in $_rpt_tags; do
+    if version_less_than "$_rpt_tag" "$_rpt_current"; then
+      if [ -z "$_rpt_best" ] || version_less_than "$_rpt_best" "$_rpt_tag"; then
+        _rpt_best="$_rpt_tag"
+      fi
+    fi
+  done
+  [ -n "$_rpt_best" ] || return 1
+  printf '%s\n' "$_rpt_best"
+}
+
+if [ -z "$EXPECT_VERSION" ] && [ "$ROLLBACK_MODE" = "0" ]; then
   EXPECT_VERSION=$(resolve_latest_tag)
   case "$EXPECT_VERSION" in
     *[!A-Za-z0-9._-]*) EXPECT_VERSION="" ;;
@@ -959,6 +1004,16 @@ check_cancel_and_abort
 if [ "$CHANNEL" = "mirror" ] && [ -z "$MIRROR_PREFIX" ]; then
   write_status probing "" "" ""
   select_builtin_mirror
+fi
+
+if [ "$ROLLBACK_MODE" = "1" ]; then
+  [ -n "$OLD_VERSION" ] || die "无法读取当前安装版本,不能自动寻找上一个 Release。"
+  info "正在查找 $OLD_VERSION 的上一个 GitHub Release..."
+  EXPECT_VERSION=$(resolve_previous_tag "$OLD_VERSION") || die "无法找到 $OLD_VERSION 的上一个正式 Release。"
+  ASSET="open-box-${EXPECT_VERSION}-linux-${ARCH}.tar.gz"
+  ASSET_URL="https://github.com/$REPO/releases/download/${EXPECT_VERSION}/$ASSET"
+  SHA_URL="$ASSET_URL.sha256"
+  info "将从 $OLD_VERSION 回退到 $EXPECT_VERSION。"
 fi
 
 # releases/latest/download/<资产> 是个**会动的指针**:106MB 正文要下几分钟,几十字节的
