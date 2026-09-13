@@ -36,8 +36,9 @@
 #                                    # 页面侧对每个渠道各发起一次 fs.exec——rpcd 的
 #                                    # fs.exec 有超时,一次 exec 里探测全部渠道有拖到
 #                                    # 超时的风险,所以改成"一次 exec 只探测一个"。
-#   sh update.sh --rollback --direct       # 自动恢复到当前版本的上一个 GitHub Release
-#   sh update.sh --rollback --mirror <前缀> # 通过镜像自动恢复到上一个 GitHub Release
+#   sh update.sh --rollback --direct       # 从 GitHub 重新下载当前版本的上一个正式 Release 装回去
+#   sh update.sh --rollback --mirror <前缀> # 同上,安装包经镜像下载(GitHub API 仍先直连)
+#                                    # 本机不保留旧版备份,回退依赖能访问 GitHub;数据目录不动
 #
 # 不带 --direct/--mirror 时沿用安装时选择的下载通道(记录在 data/channel),这是
 # 保持向后兼容的默认行为。下载与 SHA256 校验都在持久化分区的临时目录完成;只有
@@ -735,6 +736,19 @@ cleanup_stale_stage_dirs() {
     [ -e "$d" ] || continue
     safe_rm_rf "$d"
   done
+  # 下载目录 .open-box-update.XXXXXX(约 100MB)和自迁移的脚本副本 .openbox-update.<pid>.sh 现在也在
+  # 持久化分区里(TMP_PARENT 默认 /opt),断电 / OOM 之后同样没人收——这里一并清掉。
+  # 正在跑的这一份脚本副本($0)和它所在目录不能动:sh 是边读边执行的。
+  _self=$(cd -- "$(dirname -- "$0")" 2>/dev/null && pwd -P)/$(basename -- "$0")
+  for d in "$TMP_PARENT"/.open-box-update.* "$TMP_PARENT"/.openbox-update.*.sh; do
+    [ -e "$d" ] || continue
+    # 两边都按物理路径比(TMP_PARENT 可能是符号链接,比如 /tmp -> /private/tmp)
+    _dp=$(cd -- "$(dirname -- "$d")" 2>/dev/null && pwd -P)/$(basename -- "$d")
+    case "$_self" in
+      "$d"|"$d"/*|"$_dp"|"$_dp"/*) continue ;;
+    esac
+    safe_rm_rf "$d"
+  done
 }
 
 # 找到给定路径所在(或将会所在)的文件系统,供 df 检测可用空间——沿路径向上找到
@@ -894,9 +908,11 @@ version_less_than() {
 resolve_previous_tag() {
   _rpt_current="$1"
   _rpt_api="https://api.github.com/repos/$REPO/releases?per_page=100"
-  _rpt_json=$(fetch_to_stdout "$(build_url "$_rpt_api")") || return 1
+  # 加速镜像一般只代理 github.com / raw 域名,不代理 api.github.com:API 先直连,直连不通再试镜像前缀
+  _rpt_json=$(fetch_to_stdout "$_rpt_api" 2>/dev/null) || _rpt_json=$(fetch_to_stdout "$(build_url "$_rpt_api")") || return 1
   _rpt_best=""
-  _rpt_tags=$(printf '%s' "$_rpt_json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p')
+  # 先按逗号拆行:API 可能返回压成一行的 JSON,逐行 sed 只会取到最后一个 tag
+  _rpt_tags=$(printf '%s' "$_rpt_json" | tr ',' '\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p')
   for _rpt_tag in $_rpt_tags; do
     if version_less_than "$_rpt_tag" "$_rpt_current"; then
       if [ -z "$_rpt_best" ] || version_less_than "$_rpt_best" "$_rpt_tag"; then

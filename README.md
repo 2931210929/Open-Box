@@ -96,9 +96,9 @@ curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/up
 
 升级会保留订阅、规则和面板密码，并校验 Open-Box、sing-box、GeoSite / GeoIP 组件。相同且完整的组件直接复用，只有变化、缺失或损坏的组件才会从本仓库 Release 下载。
 
-### 自动回退到上一个版本
+### 回退到上一个版本
 
-如果升级后面板或内核异常，脚本会自动查询当前版本之前最近的正式 GitHub Release，并恢复到这个上一个版本，不需要手动修改版本号。GitHub 直连执行：
+如果升级后面板或内核异常,可以用下面的命令回退:脚本会到 GitHub 查当前版本之前最近的正式 Release,重新下载那一版的完整安装包装回去。路由器本机不保留旧版备份,所以回退需要能访问 GitHub(或镜像);订阅、规则、面板密码等数据目录不会被动。
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/update.sh | sh -s -- --rollback --direct
@@ -110,7 +110,7 @@ GitHub 访问不畅时，使用代理执行：
 curl -fsSL https://gh-proxy.com/raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/update.sh | sh -s -- --rollback --mirror https://gh-proxy.com
 ```
 
-两条命令都会自动识别路由器架构，下载上一个版本的完整安装包，先校验 SHA256，再替换当前文件；校验或替换失败会保留现有安装。回退后订阅、规则和面板密码仍会保留。
+两条命令都会自动识别路由器架构,下载上一个版本的完整安装包,先校验 SHA256,再替换当前文件;校验或替换失败会保留现有安装。--mirror 只影响安装包下载,查询 Release 列表的 GitHub API 会先直连、直连不通再经镜像。
 
 ## 卸载
 
