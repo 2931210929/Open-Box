@@ -869,6 +869,81 @@ check_tmp_space
 resolve_channel
 info "预检通过(架构 $ARCH,通道 $CHANNEL)。"
 
+# ---------- 系统依赖:内核模块与命令 ----------
+# 路由器固件的默认镜像常缺其中一两样(#44 缺 kmod-nft-queue;有用户缺 kmod-veth 导致规则页不能模拟 LAN
+# 终端)。这里按"功能是否可用"检查(模块可能直接编进内核,不看包名),缺的就地用 opkg / apk 装;装不上
+# 只警告不中断——面板和内核在缺项下各有明确提示,不该因为软件源不通就装不了 Open-Box。
+#   kmod-tun           tun 设备,内核起不来的硬要求
+#   kmod-nft-queue     auto_redirect(nftables 转发)的 queue 表达式,缺了内核退到纯 tun 兼容模式
+#   kmod-nft-nat       auto_redirect 的 redirect 表达式(fw4 默认自带,顺手核对)
+#   kmod-veth ip-full  规则页「真实路由 · 模拟 LAN 终端」要建网络命名空间和 veth
+#   ca-bundle          HTTPS 证书(订阅、更新下载)
+# OPENBOX_SKIP_DEPS=1 跳过这一步(自己管软件包的人用)。三个路径变量只为测试时能指到假目录。
+DEP_TUN_DEV="${DEP_TUN_DEV:-/dev/net/tun}"
+DEP_SYS_MODULE="${DEP_SYS_MODULE:-/sys/module}"
+DEP_CA_BUNDLE="${DEP_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+dep_ok() {
+  case "$1" in
+    kmod-tun) [ -e "$DEP_TUN_DEV" ] || { modprobe tun >/dev/null 2>&1; [ -e "$DEP_TUN_DEV" ]; } ;;
+    kmod-nft-queue) [ -d "$DEP_SYS_MODULE/nft_queue" ] || modprobe nft_queue >/dev/null 2>&1 ;;
+    kmod-nft-nat) [ -d "$DEP_SYS_MODULE/nft_redir" ] || modprobe nft_redir >/dev/null 2>&1 ;;
+    kmod-veth) [ -d "$DEP_SYS_MODULE/veth" ] || modprobe veth >/dev/null 2>&1 ;;
+    ip-full) ip netns list >/dev/null 2>&1 ;;
+    ca-bundle) [ -s "$DEP_CA_BUNDLE" ] ;;
+    *) return 0 ;;
+  esac
+}
+dep_effect() {
+  case "$1" in
+    kmod-tun) echo "内核起不来(没有 tun 设备)" ;;
+    kmod-nft-queue) echo "内核只能以纯 tun 兼容模式运行,吞吐更低" ;;
+    kmod-nft-nat) echo "auto_redirect 转发规则加不上,退到兼容模式" ;;
+    kmod-veth|ip-full) echo "规则页不能模拟 LAN 终端(可改用内核诊断)" ;;
+    ca-bundle) echo "HTTPS 订阅和更新下载会因证书校验失败" ;;
+  esac
+}
+ensure_dependencies() {
+  if [ "${OPENBOX_SKIP_DEPS:-}" = "1" ]; then
+    info "按 OPENBOX_SKIP_DEPS=1 跳过系统依赖检查。"
+    return 0
+  fi
+  _dep_all="kmod-tun kmod-nft-queue kmod-nft-nat kmod-veth ip-full ca-bundle"
+  _dep_missing=""
+  for _d in $_dep_all; do dep_ok "$_d" || _dep_missing="$_dep_missing $_d"; done
+  if [ -z "$_dep_missing" ]; then
+    info "系统依赖齐全(tun / nftables queue+nat / veth / ip netns / 证书)。"
+    return 0
+  fi
+  _dep_pm=""
+  _dep_verb=""
+  if command -v opkg >/dev/null 2>&1; then _dep_pm=opkg; _dep_verb="opkg install"
+  elif command -v apk >/dev/null 2>&1; then _dep_pm=apk; _dep_verb="apk add"
+  fi
+  if [ -z "$_dep_pm" ]; then
+    warn "缺少系统依赖:${_dep_missing# };没找到 opkg / apk,请自行安装。"
+  else
+    info "缺少系统依赖:${_dep_missing# },尝试用 $_dep_pm 安装(软件源不通时只提示,不中断)..."
+    _dep_to=""
+    command -v timeout >/dev/null 2>&1 && _dep_to="timeout 180"
+    $_dep_to $_dep_pm update >/dev/null 2>&1 || warn "$_dep_pm update 失败(软件源不通?),仍尝试安装。"
+    # 逐个装:一个装不上不连累其它(内核模块包要和当前内核版本一致,厂商固件常对不上)
+    for _d in $_dep_missing; do
+      $_dep_to $_dep_verb "$_d" >/dev/null 2>&1 || true
+    done
+  fi
+  _dep_still=""
+  for _d in $_dep_missing; do dep_ok "$_d" || _dep_still="$_dep_still $_d"; done
+  if [ -z "$_dep_still" ]; then
+    info "系统依赖已补齐:${_dep_missing# }"
+    return 0
+  fi
+  for _d in $_dep_still; do
+    warn "仍缺 $_d:$(dep_effect "$_d")。可稍后手动执行:${_dep_verb:-opkg install} $_d"
+  done
+  return 0
+}
+ensure_dependencies
+
 detect_downloader
 
 # ---------- 资产地址 ----------
