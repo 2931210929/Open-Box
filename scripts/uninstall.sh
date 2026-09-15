@@ -121,6 +121,7 @@ if command -v uci >/dev/null 2>&1; then
   uci -q delete firewall.openbox_panel || true
   uci -q delete firewall.openbox_dns || true
   uci -q delete firewall.openbox_tun_forward || true
+  uci -q delete firewall.openbox_tun_input || true
   uci -q delete firewall.openbox_v6block || true
   for _ob_rule in $(uci -q show firewall 2>/dev/null | sed -n 's/^firewall\.\(openbox_srv_[A-Za-z0-9_]*\)=rule$/\1/p'); do
     uci -q delete "firewall.$_ob_rule" || true

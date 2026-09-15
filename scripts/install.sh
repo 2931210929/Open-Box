@@ -20,6 +20,9 @@
 #   只剩 data/(此前卸载时选择了保留数据),允许继续安装并复用这份数据。
 
 set -eu
+# 调用方(rpcd 的 fs.exec、面板进程、curl | sh)的 umask 不一定是 022;解包和拷贝出来的文件要能被
+# uhttpd / rpcd 读到,LuCI 的 status.js 曾因此变成 600 而 403(GitHub #103 #106 #110)
+umask 022
 
 REPO="liandu2024/Open-Box"
 INSTALL_ROOT="/opt/open-box"
@@ -426,10 +429,12 @@ chmod +x /etc/init.d/openbox /etc/init.d/openbox-panel
 mkdir -p /www/luci-static/resources/view/openbox || die "无法创建 LuCI 视图目录。"
 cp "$INSTALL_ROOT/openwrt/luci/htdocs/luci-static/resources/view/openbox/status.js" \
   /www/luci-static/resources/view/openbox/status.js || die "无法安装 LuCI 视图文件。"
+chmod 644 /www/luci-static/resources/view/openbox/status.js 2>/dev/null || true
 
 mkdir -p /usr/share/luci/menu.d || die "无法创建 LuCI 菜单目录。"
 cp "$INSTALL_ROOT/openwrt/luci/root/usr/share/luci/menu.d/luci-app-openbox.json" \
   /usr/share/luci/menu.d/luci-app-openbox.json || die "无法安装 LuCI 菜单文件。"
+chmod 644 /usr/share/luci/menu.d/luci-app-openbox.json 2>/dev/null || true
 
 mkdir -p /usr/share/rpcd/acl.d || die "无法创建 rpcd ACL 目录。"
 # 先比对再覆盖:重启 rpcd 会清空它内存里的全部 LuCI 会话(等于把人踢回登录页),
@@ -442,6 +447,7 @@ if [ ! -f "$_ACL_DST" ] || ! cmp -s "$_ACL_SRC" "$_ACL_DST"; then
   _acl_changed=1
 fi
 cp "$_ACL_SRC" "$_ACL_DST" || die "无法安装 rpcd ACL 文件。"
+chmod 644 "$_ACL_DST" 2>/dev/null || true
 
 # 不清缓存的话,新菜单/视图不会立即生效(P5 review 记录过的坑);这一步与 ACL 无关,
 # 无条件做。

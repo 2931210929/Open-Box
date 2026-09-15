@@ -49,6 +49,9 @@
 # 升级完成后重新生成配置并恢复原先运行的内核。
 
 set -eu
+# 调用方(rpcd 的 fs.exec、面板进程、curl | sh)的 umask 不一定是 022;解包和拷贝出来的文件要能被
+# uhttpd / rpcd 读到,LuCI 的 status.js 曾因此变成 600 而 403(GitHub #103 #106 #110)
+umask 022
 
 REPO="liandu2024/Open-Box"
 INSTALL_ROOT="/opt/open-box"
@@ -1271,10 +1274,12 @@ done
 mkdir -p /www/luci-static/resources/view/openbox || warn "无法创建 LuCI 视图目录(不影响面板本身,LuCI 页面可能是旧的)。"
 cp "$INSTALL_ROOT/openwrt/luci/htdocs/luci-static/resources/view/openbox/status.js" \
   /www/luci-static/resources/view/openbox/status.js || warn "无法安装 LuCI 视图文件(不影响面板本身,LuCI 页面可能是旧的)。"
+chmod 644 /www/luci-static/resources/view/openbox/status.js 2>/dev/null || true
 
 mkdir -p /usr/share/luci/menu.d || warn "无法创建 LuCI 菜单目录(不影响面板本身,LuCI 页面可能是旧的)。"
 cp "$INSTALL_ROOT/openwrt/luci/root/usr/share/luci/menu.d/luci-app-openbox.json" \
   /usr/share/luci/menu.d/luci-app-openbox.json || warn "无法安装 LuCI 菜单文件(不影响面板本身,LuCI 页面可能是旧的)。"
+chmod 644 /usr/share/luci/menu.d/luci-app-openbox.json 2>/dev/null || true
 
 mkdir -p /usr/share/rpcd/acl.d || warn "无法创建 rpcd ACL 目录(不影响面板本身,LuCI 页面可能是旧的)。"
 # 先比对再覆盖:rpcd 只有在 ACL 真的变了时才需要重启,而重启 rpcd 会清空它内存里的
@@ -1287,6 +1292,7 @@ if [ ! -f "$_ACL_DST" ] || ! cmp -s "$_ACL_SRC" "$_ACL_DST"; then
   _acl_changed=1
 fi
 cp "$_ACL_SRC" "$_ACL_DST" || warn "无法安装 rpcd ACL 文件(不影响面板本身,LuCI 页面可能是旧的)。"
+chmod 644 "$_ACL_DST" 2>/dev/null || true
 
 # 用 -rf 而不是 -f:OpenWrt <=22.03 的 Lua 版 LuCI 里 /tmp/luci-modulecache 是
 # 目录,rm -f 对目录返回非零,在 set -eu 下会直接中止脚本(P6 终审 Important 4)。
