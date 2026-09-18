@@ -70,6 +70,27 @@ safe_rm_rf() {
   rm -rf -- "$target"
 }
 
+# 解包:装了 GNU tar 的固件(LibWrt 等)在 overlayfs 上解 pnpm 的目录结构会报
+# "Directory renamed before its status could be extracted"(GitHub #140);busybox 自带的 tar 没这个毛病,
+# 系统 tar 失败就换它重试一次(已经解出来的文件直接覆盖)。
+extract_tgz() {
+  tar -xzf "$1" -C "$2" && return 0
+  if command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -qx tar; then
+    warn "系统 tar 解包失败,改用 busybox tar 重试..."
+    busybox tar -xzf "$1" -C "$2" && return 0
+  fi
+  return 1
+}
+
+# 建临时目录:个别固件的 mktemp 不能执行(GitHub #165:sh: mktemp: Permission denied),退回 mkdir。
+# 目录名带进程号和时间,mkdir 不带 -p:已存在就失败,不会踩到别人的目录。
+make_tmp_dir() {
+  _mt_dir=$(mktemp -d "$1.XXXXXX" 2>/dev/null) && [ -d "$_mt_dir" ] && { echo "$_mt_dir"; return 0; }
+  _mt_dir="$1.$$.$(date +%s 2>/dev/null || echo 0)"
+  ( umask 077; mkdir "$_mt_dir" ) 2>/dev/null || return 1
+  echo "$_mt_dir"
+}
+
 # ---------- 参数解析 ----------
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -425,7 +446,7 @@ select_builtin_mirror() {
 # ---------- 下载到临时目录(此时仍未触碰安装目录) ----------
 # 目录放在安装根目录的同一持久化分区，避免把 106MB 压缩包塞进 /tmp tmpfs。
 mkdir -p "$TMP_PARENT" || die "无法创建下载临时目录父目录:$TMP_PARENT。"
-TMP_DL=$(mktemp -d "$TMP_PARENT/.open-box-install.XXXXXX") || die "无法创建临时目录。"
+TMP_DL=$(make_tmp_dir "$TMP_PARENT/.open-box-install") || die "无法创建临时目录。"
 trap 'safe_rm_rf "$TMP_DL"' EXIT INT TERM
 
 if [ "$CHANNEL" = "mirror" ] && [ -z "$MIRROR_PREFIX" ]; then
@@ -468,7 +489,7 @@ info "校验通过。"
 
 # ---------- 铺装(校验通过后才允许写 /opt) ----------
 mkdir -p "$INSTALL_ROOT" || die "无法创建 $INSTALL_ROOT(权限不足?)。"
-if ! tar -xzf "$TMP_DL/$ASSET" -C "$INSTALL_ROOT"; then
+if ! extract_tgz "$TMP_DL/$ASSET" "$INSTALL_ROOT"; then
   # 解包失败:清理刚解出来的半成品,但保留可能存在的 data/(见 check_existing_install)。
   for entry in "$INSTALL_ROOT"/*; do
     [ -e "$entry" ] || continue

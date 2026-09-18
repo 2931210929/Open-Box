@@ -141,6 +141,27 @@ safe_rm_rf() {
   rm -rf -- "$target"
 }
 
+# 解包:装了 GNU tar 的固件(LibWrt 等)在 overlayfs 上解 pnpm 的目录结构会报
+# "Directory renamed before its status could be extracted"(GitHub #140);busybox 自带的 tar 没这个毛病,
+# 系统 tar 失败就换它重试一次(已经解出来的文件直接覆盖)。随包的 update-components.sh 也用它。
+extract_tgz() {
+  tar -xzf "$1" -C "$2" && return 0
+  if command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -qx tar; then
+    warn "系统 tar 解包失败,改用 busybox tar 重试..."
+    busybox tar -xzf "$1" -C "$2" && return 0
+  fi
+  return 1
+}
+
+# 建临时目录:个别固件的 mktemp 不能执行(GitHub #165:sh: mktemp: Permission denied),退回 mkdir。
+# 目录名带进程号和时间,mkdir 不带 -p:已存在就失败,不会踩到别人的目录。
+make_tmp_dir() {
+  _mt_dir=$(mktemp -d "$1.XXXXXX" 2>/dev/null) && [ -d "$_mt_dir" ] && { echo "$_mt_dir"; return 0; }
+  _mt_dir="$1.$$.$(date +%s 2>/dev/null || echo 0)"
+  ( umask 077; mkdir "$_mt_dir" ) 2>/dev/null || return 1
+  echo "$_mt_dir"
+}
+
 # 供 --probe 计时用,毫秒。首选 /proc/uptime:第一列是开机以来的秒数、带两位小数
 # (10ms 精度),任何 Linux 都有,busybox awk 就能算,不依赖 date 的实现。
 # 以前只用 date +%s%N:OpenWrt 自带的 busybox date 不支持 %N,而且不是原样输出
@@ -580,7 +601,7 @@ if [ -n "$PROBE_CHANNEL" ]; then
   ASSET_URL="https://github.com/$REPO/releases/latest/download/$ASSET"
   SHA_URL="$ASSET_URL.sha256"
 
-  TMP_DL=$(mktemp -d "${TMPDIR:-/tmp}/open-box-probe.XXXXXX" 2>/dev/null) || {
+  TMP_DL=$(make_tmp_dir "${TMPDIR:-/tmp}/open-box-probe") || {
     echo "fail 无法创建临时目录"
     exit 0
   }
@@ -1088,7 +1109,7 @@ cleanup() {
   return 0
 }
 mkdir -p "$TMP_PARENT" || die "无法创建下载临时目录父目录:$TMP_PARENT。"
-TMP_DL=$(mktemp -d "$TMP_PARENT/.open-box-update.XXXXXX") || die "无法创建临时目录。"
+TMP_DL=$(make_tmp_dir "$TMP_PARENT/.open-box-update") || die "无法创建临时目录。"
 trap cleanup EXIT INT TERM
 
 # 从这里开始,cleanup() trap 已经注册好(TMP_DL 已创建)——检查点可以放心
@@ -1196,7 +1217,7 @@ info "解包..."
 STAGE_DIR="$INSTALL_ROOT/.update-stage.$$"
 safe_rm_rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR" || die "无法在 $INSTALL_ROOT 下创建暂存目录(权限或空间不足?)。现有安装未改动。"
-tar -xzf "$TMP_DL/$ASSET" -C "$STAGE_DIR" || die "解包失败。现有安装未改动。"
+extract_tgz "$TMP_DL/$ASSET" "$STAGE_DIR" || die "解包失败。现有安装未改动。"
 fi # 完整包 / 按需组件均已在 STAGE_DIR 准备好
 for must in node panel bin openwrt meta.json; do
   [ -e "$STAGE_DIR/$must" ] || die "升级包内容不完整,缺少 $must。现有安装未改动。"
