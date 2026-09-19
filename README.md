@@ -91,6 +91,35 @@ curl -fsSL https://gh-proxy.com/raw.githubusercontent.com/liandu2024/Open-Box/ma
 
 安装要求：OpenWrt、x86_64 或 aarch64、至少 512MB 存储空间和 512MB 内存。安装 / 升级脚本会检查并尝试用 opkg 或 apk 补齐系统依赖（kmod-tun、kmod-nft-queue、kmod-nft-nat、kmod-veth、ip-full、ca-bundle）；软件源不通时只提示、不中断，可稍后按提示手动安装，设 `OPENBOX_SKIP_DEPS=1` 可跳过这一步。安装完成后，用浏览器打开脚本提示的 `http://<路由器局域网 IP>:2026` 地址，首次访问设置管理密码。
 
+安装完成后，用浏览器打开 `http://<路由器 LAN 地址>:2026`（安装脚本结束时会打印这个地址），**首次打开时设置面板密码**。以后忘了密码不用重装，见下面的[忘记面板密码](#忘记面板密码)。
+
+## 忘记面板密码
+
+面板密码保存在路由器上，能以 root 登上路由器就能查到，**不需要重装，也不会丢失订阅和规则**。两个地方可以看：
+
+**1. LuCI 页面**：路由器管理界面 → 服务 → Open-Box，页面顶部「完整管理请到 Open-Box 面板：」那一行，面板地址后面直接显示 `密码: xxxx`。刚升级完看不到的话，退出 LuCI 重新登录一次。
+
+**2. SSH 命令**：SSH 登上路由器后运行 `open-box`，选 `1`：
+
+```text
+root@OpenWrt:~# open-box
+
+Open-Box v0.1.210
+  1) 当前密码
+  2) 检查升级
+  3) 退出
+请选择 [1-3]: 1
+
+  面板地址: http://192.168.1.1:2026
+  当前密码: ********
+```
+
+只想要密码本身可以直接运行 `open-box password`；`open-box check` 检查有没有新版本，`open-box update` 直接升级。
+
+以上两个入口从 **v0.1.210** 开始提供。更早的版本先通过 SSH 执行下面「升级」一节的命令升到最新版（升级会保留密码、订阅和规则），升级完成后 `open-box` 命令就可以用了。
+
+查到密码后想换一个：登录面板，在「设置」页点「修改密码」。
+
 ## 升级
 
 面板中可以从“设置 → 后端设置”检查更新，也可以通过 SSH 执行：
@@ -100,22 +129,6 @@ curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/up
 ```
 
 升级会保留订阅、规则和面板密码，并校验 Open-Box、sing-box、GeoSite / GeoIP 组件。相同且完整的组件直接复用，只有变化、缺失或损坏的组件才会从本仓库 Release 下载。
-
-### 忘记面板密码
-
-两种办法,都需要能以 root 登上路由器:
-
-- LuCI → 服务 → Open-Box 页面,面板地址后面直接显示当前密码;
-- SSH 登上路由器后运行 `open-box`:
-
-```text
-Open-Box v0.1.210
-  1) 当前密码
-  2) 检查升级
-  3) 退出
-```
-
-`open-box password` 只打印密码,`open-box check` 只检查有没有新版本,`open-box update` 直接升级。
 
 ### 回退到上一个版本
 
