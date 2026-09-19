@@ -1390,6 +1390,13 @@ fi
 cp "$_ACL_SRC" "$_ACL_DST" || warn "无法安装 rpcd ACL 文件(不影响面板本身,LuCI 页面可能是旧的)。"
 chmod 644 "$_ACL_DST" 2>/dev/null || true
 
+# 命令行 open-box(SSH 下看面板密码 / 检查升级)。不覆盖别人放在 /usr/bin/open-box 的真文件;建不了只警告。
+# 面板的 init 脚本每次启动也会补一次(从不认识这个文件的老版本升上来时靠它)
+if [ -f "$INSTALL_ROOT/openwrt/bin/open-box" ] && { [ ! -e /usr/bin/open-box ] || [ -L /usr/bin/open-box ]; }; then
+  chmod +x "$INSTALL_ROOT/openwrt/bin/open-box" 2>/dev/null || true
+  ln -sf "$INSTALL_ROOT/openwrt/bin/open-box" /usr/bin/open-box 2>/dev/null || warn "无法创建 /usr/bin/open-box(不影响面板)。"
+fi
+
 # 用 -rf 而不是 -f:OpenWrt <=22.03 的 Lua 版 LuCI 里 /tmp/luci-modulecache 是
 # 目录,rm -f 对目录返回非零,在 set -eu 下会直接中止脚本(P6 终审 Important 4)。
 # 菜单/视图文件的变化靠清缓存即可生效,不需要动 rpcd。

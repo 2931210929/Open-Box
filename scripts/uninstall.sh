@@ -145,6 +145,8 @@ rm -f /www/luci-static/resources/view/openbox/status.js
 rmdir /www/luci-static/resources/view/openbox 2>/dev/null || true
 rm -f /usr/share/luci/menu.d/luci-app-openbox.json
 rm -f /usr/share/rpcd/acl.d/luci-app-openbox.json
+# 命令行 open-box:只删我们自己建的那个软链接,别人放在那里的真文件不动
+[ -L /usr/bin/open-box ] && rm -f /usr/bin/open-box
 # 用 -rf 而不是 -f:OpenWrt <=22.03 的 Lua 版 LuCI 里 /tmp/luci-modulecache 是
 # 目录,rm -f 对目录返回非零,在 set -eu 下会直接中止脚本(P6 终审 Important 4)。
 rm -rf /tmp/luci-*cache* 2>/dev/null || true

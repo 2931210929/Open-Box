@@ -521,6 +521,13 @@ cp "$INSTALL_ROOT/openwrt/initd/openbox" /etc/init.d/openbox || die "无法安�
 cp "$INSTALL_ROOT/openwrt/initd/openbox-panel" /etc/init.d/openbox-panel || die "无法安装 /etc/init.d/openbox-panel。"
 chmod +x /etc/init.d/openbox /etc/init.d/openbox-panel
 
+# 命令行 open-box:SSH 登上路由器后敲 open-box,看面板密码 / 检查升级(忘了密码的人靠它找回)。
+# 不覆盖别人放在 /usr/bin/open-box 的真文件;建不了只警告,不影响安装
+if [ -f "$INSTALL_ROOT/openwrt/bin/open-box" ] && { [ ! -e /usr/bin/open-box ] || [ -L /usr/bin/open-box ]; }; then
+  chmod +x "$INSTALL_ROOT/openwrt/bin/open-box" 2>/dev/null || true
+  ln -sf "$INSTALL_ROOT/openwrt/bin/open-box" /usr/bin/open-box || warn "无法创建 /usr/bin/open-box(不影响面板;需要时可直接运行 $INSTALL_ROOT/openwrt/bin/open-box)。"
+fi
+
 # ---------- LuCI 三文件 ----------
 mkdir -p /www/luci-static/resources/view/openbox || die "无法创建 LuCI 视图目录。"
 cp "$INSTALL_ROOT/openwrt/luci/htdocs/luci-static/resources/view/openbox/status.js" \
@@ -580,5 +587,18 @@ echo " Open-Box 安装完成($VERSION)"
 echo "========================================"
 echo "面板地址: $PANEL_URL"
 echo "首次打开面板需要设置管理密码。"
+# 命令行 open-box(见 openwrt/bin/open-box):忘了面板密码的人靠它找回,所以装完就告诉一声。
+# 软链接没建成(/usr/bin 下已有别人的同名文件、或文件系统只读)就给完整路径
+if [ -L /usr/bin/open-box ]; then
+  OPENBOX_CLI="open-box"
+elif [ -x "$INSTALL_ROOT/openwrt/bin/open-box" ]; then
+  OPENBOX_CLI="$INSTALL_ROOT/openwrt/bin/open-box"
+else
+  OPENBOX_CLI=""
+fi
+if [ -n "$OPENBOX_CLI" ]; then
+  echo "以后忘了面板密码、或想检查升级:SSH 登上路由器后运行  $OPENBOX_CLI"
+  echo "  (菜单:1 当前密码 / 2 检查升级 / 3 退出;LuCI → 服务 → Open-Box 页面也会显示密码)"
+fi
 echo "如面板无法访问,可在路由器管理界面(LuCI)→ 服务 → Open-Box 中查看/重启服务,或使用紧急停止恢复直连。"
 echo ""
