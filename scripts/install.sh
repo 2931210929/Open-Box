@@ -18,6 +18,7 @@
 #   生效(P5 review 踩过的坑,详见 openwrt/luci 相关记录)。
 # - 若 /opt/open-box 已存在完整安装,拒绝安装并提示改用 update.sh;但如果里面
 #   只剩 data/(此前卸载时选择了保留数据),允许继续安装并复用这份数据。
+#   sh install.sh --port 3036      # 指定面板端口(默认 3036;不加这个参数且有终端时会问一次)
 
 set -eu
 # 调用方(rpcd 的 fs.exec、面板进程、curl | sh)的 umask 不一定是 022;解包和拷贝出来的文件要能被
@@ -92,6 +93,56 @@ make_tmp_dir() {
 }
 
 # ---------- 参数解析 ----------
+# ---- openbox-port-check:start ----
+# 这一段在 scripts/install.sh 里有一份**一模一样**的拷贝(安装脚本是单独 curl 下来先跑的,
+# 那时候包还没解开,没法共用文件)。两边必须逐字相同,由 panel/server/system/port-check-parity.test.mjs 守着。
+# 面板端口存在 data/panel-port(跟着 data 走:升级不动、卸载保留数据时也留着)。
+# 没有这个文件就是 2026 —— v0.1.216 及更早装的机器都没有它,默认值一变它们升级后就打不开了。
+OPENBOX_PORT_FILE=/opt/open-box/data/panel-port
+OPENBOX_PORT_FALLBACK=2026
+OPENBOX_PORT_DEFAULT=3036
+# Open-Box 自己占的端口(内核 clash API / DNS 入站 / DNS 重写 / 回环入站)和动不得的系统端口
+OPENBOX_RESERVED_PORTS="9095 7853 7854 7891 53 22 80 443"
+
+# 端口能不能用:不能用时把原因打到 stdout 并返回 0;能用返回 1
+openbox_port_problem() {
+  _p="$1"
+  case "$_p" in
+    ''|*[!0-9]*) echo "端口要填 1024-65535 的数字"; return 0 ;;
+  esac
+  if [ "$_p" -lt 1024 ] || [ "$_p" -gt 65535 ]; then
+    echo "端口要在 1024-65535 之间(1024 以下是系统保留端口)"
+    return 0
+  fi
+  for _r in $OPENBOX_RESERVED_PORTS; do
+    if [ "$_p" = "$_r" ]; then
+      echo "$_p 是 Open-Box 自己或系统服务在用的端口(内核 API / DNS / SSH / HTTP 等),换一个"
+      return 0
+    fi
+  done
+  # 真在监听的端口。ss 优先(OpenWrt 新固件自带),没有就退回 netstat;两个都没有就只能跳过这一项检查
+  _busy=""
+  if command -v ss >/dev/null 2>&1; then
+    _busy=$(ss -ltn 2>/dev/null | awk 'NR>1 {print $4}' | sed 's/.*[:.]//' | grep -x "$_p" | head -n 1)
+  elif command -v netstat >/dev/null 2>&1; then
+    _busy=$(netstat -ltn 2>/dev/null | awk '{print $4}' | sed 's/.*[:.]//' | grep -x "$_p" | head -n 1)
+  fi
+  if [ -n "$_busy" ]; then
+    echo "$_p 已经被别的程序占用(已在监听)"
+    return 0
+  fi
+  return 1
+}
+
+openbox_current_port() {
+  _cp=$(cat "$OPENBOX_PORT_FILE" 2>/dev/null | tr -dc '0-9')
+  [ -n "$_cp" ] || _cp="$OPENBOX_PORT_FALLBACK"
+  printf '%s\n' "$_cp"
+}
+# ---- openbox-port-check:end ----
+
+PANEL_PORT=""
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --mirror)
@@ -113,6 +164,13 @@ while [ $# -gt 0 ]; do
             ;;
         esac
       fi
+      ;;
+    --port)
+      shift
+      [ $# -ge 1 ] || die "--port 后面要跟端口号"
+      PANEL_PORT="$1"
+      _reason=$(openbox_port_problem "$PANEL_PORT") && die "面板端口不能用:$_reason"
+      shift
       ;;
     -h|--help)
       usage
@@ -210,6 +268,44 @@ check_memory
 check_existing_install
 check_conflicts
 info "预检通过(架构 $RAW_ARCH → $ARCH)。"
+
+# ---------- 面板端口 ----------
+# 装完之后还能改(LuCI 页面的「修改端口」或 open-box port),这里只是让装机时就能选,
+# 顺便挡住"默认端口早被别的服务占了、装完打不开面板"这种情况。
+# 顺序:--port 指定的 > 这台机器上次装时用的(data/panel-port,重装保留数据时沿用) > 默认 3036。
+if [ -z "$PANEL_PORT" ]; then
+  PANEL_PORT=$(cat "$INSTALL_ROOT/data/panel-port" 2>/dev/null | tr -dc '0-9')
+  [ -n "$PANEL_PORT" ] || PANEL_PORT="$OPENBOX_PORT_DEFAULT"
+
+  # 有终端就问一次(curl | sh 的 stdin 是脚本本身,只能问 /dev/tty;问不到就沿用默认值)。
+  # 端口不可用时必须问出一个能用的来,问不到就退出并告诉用户加 --port ——
+  # 硬装上去等于装完打不开面板。
+  while :; do
+    _reason=$(openbox_port_problem "$PANEL_PORT") || break
+    warn "面板端口 $PANEL_PORT 不能用:$_reason"
+    if printf '请输入其它面板端口: ' > /dev/tty 2>/dev/null && read -r _ans < /dev/tty 2>/dev/null; then
+      PANEL_PORT=$(printf '%s' "$_ans" | tr -dc '0-9')
+      continue
+    fi
+    die "面板端口 $PANEL_PORT 不能用,而且这里没有终端可以问你。请带上可用端口重跑,例如:sh install.sh --port 3080"
+  done
+
+  if printf '面板端口 [%s](直接回车用这个): ' "$PANEL_PORT" > /dev/tty 2>/dev/null; then
+    if read -r _ans < /dev/tty 2>/dev/null && [ -n "$_ans" ]; then
+      _want=$(printf '%s' "$_ans" | tr -dc '0-9')
+      while :; do
+        _reason=$(openbox_port_problem "$_want") || { PANEL_PORT="$_want"; break; }
+        warn "$_want 不能用:$_reason"
+        printf '请重新输入面板端口(直接回车用 %s): ' "$PANEL_PORT" > /dev/tty 2>/dev/null || break
+        read -r _ans < /dev/tty 2>/dev/null || break
+        [ -n "$_ans" ] || break
+        _want=$(printf '%s' "$_ans" | tr -dc '0-9')
+      done
+    fi
+  fi
+fi
+info "面板端口:$PANEL_PORT"
+
 
 # ---------- 系统依赖:内核模块与命令 ----------
 # 路由器固件的默认镜像常缺其中一两样(#44 缺 kmod-nft-queue;有用户缺 kmod-veth 导致规则页不能模拟 LAN
@@ -516,6 +612,10 @@ else
   printf 'direct\n' > "$INSTALL_ROOT/data/channel"
 fi
 
+# 面板端口落盘:init 脚本启动面板时读它(没有这个文件的老机器继续用 2026)
+mkdir -p "$INSTALL_ROOT/data" || die "无法创建 $INSTALL_ROOT/data。"
+printf '%s\n' "$PANEL_PORT" > "$INSTALL_ROOT/data/panel-port" || die "无法写入面板端口文件。"
+
 # ---------- init 脚本 ----------
 cp "$INSTALL_ROOT/openwrt/initd/openbox" /etc/init.d/openbox || die "无法安装 /etc/init.d/openbox。"
 cp "$INSTALL_ROOT/openwrt/initd/openbox-panel" /etc/init.d/openbox-panel || die "无法安装 /etc/init.d/openbox-panel。"
@@ -580,9 +680,9 @@ if [ -z "$LAN_IP" ] && command -v ip >/dev/null 2>&1; then
   LAN_IP=$(ip -4 -o addr show br-lan 2>/dev/null | awk '{ print $4 }' | cut -d/ -f1 | head -n 1)
 fi
 if [ -n "$LAN_IP" ]; then
-  PANEL_URL="http://$LAN_IP:2026"
+  PANEL_URL="http://$LAN_IP:$PANEL_PORT"
 else
-  PANEL_URL="http://<路由器局域网 IP>:2026"
+  PANEL_URL="http://<路由器局域网 IP>:$PANEL_PORT"
 fi
 
 echo ""
