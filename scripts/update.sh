@@ -58,7 +58,8 @@ INSTALL_ROOT="/opt/open-box"
 # /tmp 是 tmpfs，升级包当前约 106MB；在内核和面板运行时把它下载到 /tmp
 # 会额外消耗同等大小的运行内存，512MB 设备可能被 OOM killer 杀掉。默认改用
 # /opt 所在持久化分区，仍可通过 OPENBOX_TMPDIR 指定外接存储等其它目录。
-TMP_PARENT="${OPENBOX_TMPDIR:-$(dirname -- "$INSTALL_ROOT")}"
+# TMP_PARENT 在下面用 openbox_pick_tmp_parent 现挑(见那一段的说明),这里先留空
+TMP_PARENT=""
 # 升级要在安装目录所在分区暂存一份新的(两阶段换文件,新旧并存才能原子切换),装好的一份
 # 约 213MB,所以升级本身只需要约 213MB 空闲——不是安装那个 512MB(那是"装完还要留得下
 # 以后升级"的总量)。以前照抄 512MB 把只剩 495MB 的用户挡在升级门外(GitHub #11)。
@@ -82,9 +83,57 @@ STATUS_PID=""
 
 info() { echo "[open-box] $*"; }
 warn() { echo "[open-box] 警告:$*" >&2; }
+# curl | sh 的时候,脚本本身是从 stdin 读进来的:我们一 exit,管道读端就关了,curl 还在写剩下的
+# 内容就吃一个 EPIPE,于是用户在我们那句中文错误下面又看到一行莫名其妙的
+# `curl: (23) Failure writing output to destination`(真机截图里就是这样,很容易被当成"下载失败")。
+# 退出前把 stdin 剩下的内容读完,curl 就能正常写完、安静退出。只在 stdin 不是终端时做 ——
+# 交互式跑 `sh install.sh` 时 stdin 是终端,cat 会一直等输入,那就真卡死了。
+# ---- openbox-tmp-parent:start ----
+# 这一段在 install.sh / update.sh / uninstall.sh 三份里**一模一样**(三个脚本各自单独 curl 下来跑,
+# 没法共用文件),由 panel/server/system/script-parity.test.mjs 守着逐字相同。
+#
+# 临时目录默认放在安装目录所在的持久化分区(/opt):下载包上百 MB,塞进 /tmp 的 tmpfs 会吃光内存。
+# 但不是每台机器的 /opt 都能写 —— iStoreOS 25.12.5 上就建不了目录,老版本直接 die「无法创建临时
+# 目录」,用户连装都装不上(GitHub #191)。所以按顺序试几个位置,挑第一个真能创建目录的;
+# 一个都不行才报错,并且把最后一次的真实报错带出来,不再只甩一句"无法创建"。
+openbox_tmp_probe_err=""
+openbox_pick_tmp_parent() {
+  _optp_install_parent=$(dirname -- "$INSTALL_ROOT")
+  openbox_tmp_probe_err=""
+  for _optp in ${OPENBOX_TMPDIR:+"$OPENBOX_TMPDIR"} "$_optp_install_parent" /var/tmp /root /tmp; do
+    [ -n "$_optp" ] || continue
+    mkdir -p "$_optp" 2>/dev/null || continue
+    _optp_probe="$_optp/.open-box-wtest.$$"
+    rm -rf "$_optp_probe" 2>/dev/null
+    openbox_tmp_probe_err=$( ( umask 077; mkdir "$_optp_probe" ) 2>&1 ) || continue
+    rmdir "$_optp_probe" 2>/dev/null
+    printf '%s\n' "$_optp"
+    return 0
+  done
+  return 1
+}
+# ---- openbox-tmp-parent:end ----
+
+# 真要用临时目录时才挑一次(挑不到就带着真实原因退出)。挑好后各处复用同一个 TMP_PARENT。
+ensure_tmp_parent() {
+  [ -n "$TMP_PARENT" ] && return 0
+  TMP_PARENT=$(openbox_pick_tmp_parent) || die "找不到可写的临时目录(依次试过 ${OPENBOX_TMPDIR:+$OPENBOX_TMPDIR、}$(dirname -- "$INSTALL_ROOT")、/var/tmp、/root、/tmp)。最后一次的错误:${openbox_tmp_probe_err:-未知}。可用 OPENBOX_TMPDIR=<某个可写目录> 指定。"
+  case "$TMP_PARENT" in
+    /tmp|/tmp/*) warn "$(dirname -- "$INSTALL_ROOT") 写不了,改用 $TMP_PARENT(它通常是内存盘,上百 MB 的包可能放不下;不行就用 OPENBOX_TMPDIR 指到一块有空间的磁盘)。" ;;
+  esac
+  return 0
+}
+
+drain_stdin() {
+  [ -t 0 ] && return 0
+  cat >/dev/null 2>&1
+  return 0
+}
+
 die() {
   echo "[open-box] 错误:$*" >&2
   write_status failed "" "" "$*"
+  drain_stdin
   exit 1
 }
 
@@ -397,7 +446,7 @@ done
 if [ "$_probe_or_cancel_scan" != "1" ] && [ "${OPENBOX_UPDATE_RELOCATED:-0}" != "1" ]; then
   case "$0" in
     "$INSTALL_ROOT"/*)
-      mkdir -p "$TMP_PARENT" || die "无法创建升级脚本临时目录父目录:$TMP_PARENT。"
+      ensure_tmp_parent
       _self_copy="$TMP_PARENT/.openbox-update.$$.sh"
       cp -f -- "$0" "$_self_copy" || die "无法把升级脚本复制到临时目录:$TMP_PARENT,请改用:wget -O- <脚本地址> | sh"
       chmod +x "$_self_copy" 2>/dev/null || true
@@ -735,7 +784,9 @@ check_openwrt() {
 
 check_installed() {
   if [ ! -d "$INSTALL_ROOT" ] || [ ! -f "$INSTALL_ROOT/meta.json" ]; then
-    die "未检测到现有 Open-Box 安装($INSTALL_ROOT)。首次安装请使用 install.sh。"
+    # 同上:给能直接照抄的命令,别只说"请使用 install.sh"
+    die "未检测到现有 Open-Box 安装($INSTALL_ROOT)。首次安装请复制下面这条命令运行:
+       curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/install.sh | sh -s -- --mirror"
   fi
 }
 
@@ -764,6 +815,7 @@ cleanup_stale_stage_dirs() {
   # 持久化分区里(TMP_PARENT 默认 /opt),断电 / OOM 之后同样没人收——这里一并清掉。
   # 正在跑的这一份脚本副本($0)和它所在目录不能动:sh 是边读边执行的。
   _self=$(cd -- "$(dirname -- "$0")" 2>/dev/null && pwd -P)/$(basename -- "$0")
+  [ -n "$TMP_PARENT" ] || return 0
   for d in "$TMP_PARENT"/.open-box-update.* "$TMP_PARENT"/.openbox-update.*.sh; do
     [ -e "$d" ] || continue
     # 两边都按物理路径比(TMP_PARENT 可能是符号链接,比如 /tmp -> /private/tmp)
@@ -1108,8 +1160,8 @@ cleanup() {
   [ -n "${UPDATE_LOCK:-}" ] && rm -rf "$UPDATE_LOCK" 2>/dev/null
   return 0
 }
-mkdir -p "$TMP_PARENT" || die "无法创建下载临时目录父目录:$TMP_PARENT。"
-TMP_DL=$(make_tmp_dir "$TMP_PARENT/.open-box-update") || die "无法创建临时目录。"
+ensure_tmp_parent
+TMP_DL=$(make_tmp_dir "$TMP_PARENT/.open-box-update") || die "无法在 $TMP_PARENT 下创建临时目录。"
 trap cleanup EXIT INT TERM
 
 # 从这里开始,cleanup() trap 已经注册好(TMP_DL 已创建)——检查点可以放心

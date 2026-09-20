@@ -31,7 +31,8 @@ INSTALL_ROOT="/opt/open-box"
 # 106MB，低内存路由器在面板/内核已经运行时下载它可能触发 OOM，表现为“死机”。
 # 下载临时目录默认放在 /opt 所在的持久化文件系统；需要时可用 OPENBOX_TMPDIR
 # 明确指定其它可写目录（例如外接存储）。校验通过前仍不会写入安装目录本身。
-TMP_PARENT="${OPENBOX_TMPDIR:-$(dirname -- "$INSTALL_ROOT")}"
+# TMP_PARENT 在下面用 openbox_pick_tmp_parent 现挑(见那一段的说明),这里先留空
+TMP_PARENT=""
 MIN_FREE_KB=$((512 * 1024))
 # 450000KB(≈440MB)而不是标称的 512*1024:512MB 设备的 /proc/meminfo MemTotal 实测
 # 只有约 480-500MB(内核保留了一部分),用 524288 卡阈值会把 README 宣称支持的
@@ -45,8 +46,56 @@ MIRROR_PREFIX=""
 # ---------- 基础输出 ----------
 info() { echo "[open-box] $*"; }
 warn() { echo "[open-box] 警告:$*" >&2; }
+# curl | sh 的时候,脚本本身是从 stdin 读进来的:我们一 exit,管道读端就关了,curl 还在写剩下的
+# 内容就吃一个 EPIPE,于是用户在我们那句中文错误下面又看到一行莫名其妙的
+# `curl: (23) Failure writing output to destination`(真机截图里就是这样,很容易被当成"下载失败")。
+# 退出前把 stdin 剩下的内容读完,curl 就能正常写完、安静退出。只在 stdin 不是终端时做 ——
+# 交互式跑 `sh install.sh` 时 stdin 是终端,cat 会一直等输入,那就真卡死了。
+# ---- openbox-tmp-parent:start ----
+# 这一段在 install.sh / update.sh / uninstall.sh 三份里**一模一样**(三个脚本各自单独 curl 下来跑,
+# 没法共用文件),由 panel/server/system/script-parity.test.mjs 守着逐字相同。
+#
+# 临时目录默认放在安装目录所在的持久化分区(/opt):下载包上百 MB,塞进 /tmp 的 tmpfs 会吃光内存。
+# 但不是每台机器的 /opt 都能写 —— iStoreOS 25.12.5 上就建不了目录,老版本直接 die「无法创建临时
+# 目录」,用户连装都装不上(GitHub #191)。所以按顺序试几个位置,挑第一个真能创建目录的;
+# 一个都不行才报错,并且把最后一次的真实报错带出来,不再只甩一句"无法创建"。
+openbox_tmp_probe_err=""
+openbox_pick_tmp_parent() {
+  _optp_install_parent=$(dirname -- "$INSTALL_ROOT")
+  openbox_tmp_probe_err=""
+  for _optp in ${OPENBOX_TMPDIR:+"$OPENBOX_TMPDIR"} "$_optp_install_parent" /var/tmp /root /tmp; do
+    [ -n "$_optp" ] || continue
+    mkdir -p "$_optp" 2>/dev/null || continue
+    _optp_probe="$_optp/.open-box-wtest.$$"
+    rm -rf "$_optp_probe" 2>/dev/null
+    openbox_tmp_probe_err=$( ( umask 077; mkdir "$_optp_probe" ) 2>&1 ) || continue
+    rmdir "$_optp_probe" 2>/dev/null
+    printf '%s\n' "$_optp"
+    return 0
+  done
+  return 1
+}
+# ---- openbox-tmp-parent:end ----
+
+# 真要用临时目录时才挑一次(挑不到就带着真实原因退出)。挑好后各处复用同一个 TMP_PARENT。
+ensure_tmp_parent() {
+  [ -n "$TMP_PARENT" ] && return 0
+  TMP_PARENT=$(openbox_pick_tmp_parent) || die "找不到可写的临时目录(依次试过 ${OPENBOX_TMPDIR:+$OPENBOX_TMPDIR、}$(dirname -- "$INSTALL_ROOT")、/var/tmp、/root、/tmp)。最后一次的错误:${openbox_tmp_probe_err:-未知}。可用 OPENBOX_TMPDIR=<某个可写目录> 指定。"
+  case "$TMP_PARENT" in
+    /tmp|/tmp/*) warn "$(dirname -- "$INSTALL_ROOT") 写不了,改用 $TMP_PARENT(它通常是内存盘,上百 MB 的包可能放不下;不行就用 OPENBOX_TMPDIR 指到一块有空间的磁盘)。" ;;
+  esac
+  return 0
+}
+
+drain_stdin() {
+  [ -t 0 ] && return 0
+  cat >/dev/null 2>&1
+  return 0
+}
+
 die() {
   echo "[open-box] 错误:$*" >&2
+  drain_stdin
   exit 1
 }
 
@@ -243,7 +292,10 @@ check_existing_install() {
     break
   done
   if [ -n "$leftover" ]; then
-    die "$INSTALL_ROOT 已存在且包含完整安装。如需升级请使用 update.sh,而不是重新安装。"
+    # 光说"请使用 update.sh"没用:用户照着敲 update.sh 只会得到 not found(真机反馈)。给完整命令。
+    die "$INSTALL_ROOT 已存在且包含完整安装。如需升级,请复制下面这条命令运行:
+       curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/update.sh | sh -s -- --mirror
+     (也可以在面板或 LuCI → 服务 → Open-Box 页面里点升级。)"
   fi
   info "检测到保留的 $INSTALL_ROOT/data(此前卸载时选择了保留数据),安装将复用它。"
 }
@@ -541,8 +593,8 @@ select_builtin_mirror() {
 
 # ---------- 下载到临时目录(此时仍未触碰安装目录) ----------
 # 目录放在安装根目录的同一持久化分区，避免把 106MB 压缩包塞进 /tmp tmpfs。
-mkdir -p "$TMP_PARENT" || die "无法创建下载临时目录父目录:$TMP_PARENT。"
-TMP_DL=$(make_tmp_dir "$TMP_PARENT/.open-box-install") || die "无法创建临时目录。"
+ensure_tmp_parent
+TMP_DL=$(make_tmp_dir "$TMP_PARENT/.open-box-install") || die "无法在 $TMP_PARENT 下创建临时目录。"
 trap 'safe_rm_rf "$TMP_DL"' EXIT INT TERM
 
 if [ "$CHANNEL" = "mirror" ] && [ -z "$MIRROR_PREFIX" ]; then
