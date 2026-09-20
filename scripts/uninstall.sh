@@ -55,6 +55,49 @@ write_status() {
 # `curl: (23) Failure writing output to destination`(真机截图里就是这样,很容易被当成"下载失败")。
 # 退出前把 stdin 剩下的内容读完,curl 就能正常写完、安静退出。只在 stdin 不是终端时做 ——
 # 交互式跑 `sh install.sh` 时 stdin 是终端,cat 会一直等输入,那就真卡死了。
+# ---- openbox-env-report:start ----
+# 这一段在 install.sh / update.sh / uninstall.sh 三份里**一模一样**,由
+# panel/server/system/script-parity.test.mjs 守着逐字相同。
+#
+# 装不上 / 升不上时把环境摊开来打一遍。起因是 GitHub #191:用户只看到一句「无法创建临时目录」,
+# 我这边既不知道 /opt 为什么写不了,也没法让他一次就把该给的信息给全,来回问了好几轮还是靠猜。
+# 这里的每一行都是排查时真会问的东西,而且全部容错——诊断信息自己出错绝不能把退出流程再搞砸。
+openbox_env_report() {
+  [ "${ENV_REPORT_ON:-0}" = "1" ] || return 0
+  _er_root_parent=$(dirname -- "$INSTALL_ROOT")
+  {
+    echo ""
+    echo "---- 环境信息(反馈问题时请连同上面的错误一起贴出来)----"
+    echo "固件: $(sed -n 's/^DISTRIB_DESCRIPTION=//p' /etc/openwrt_release 2>/dev/null | tr -d "\"'" | head -n 1)"
+    echo "内核: $(uname -r 2>/dev/null)  架构: $(uname -m 2>/dev/null)"
+    echo "安装目录: $INSTALL_ROOT"
+    echo "$_er_root_parent 所在文件系统: $(awk -v d="$_er_root_parent" '{ mp=$2; if (mp=="/" || index(d"/", mp"/")==1) { if (length(mp) > bl) { bl=length(mp); best=$1" 挂在 "mp" ("$3", "$4")" } } } END { print best }' /proc/mounts 2>/dev/null)"
+    echo "$_er_root_parent 空间: $(df -Pk "$_er_root_parent" 2>/dev/null | awk 'END {printf "%s MB 可用 / 共 %s MB", int($4/1024), int($2/1024)}')"
+    echo "$_er_root_parent 属性: $(ls -ld "$_er_root_parent" 2>&1 | head -n 1)"
+    # 逐个试候选临时目录:这是 #191 那类故障最直接的证据
+    for _er_c in ${OPENBOX_TMPDIR:+"$OPENBOX_TMPDIR"} "$_er_root_parent" /var/tmp /root /tmp; do
+      [ -n "$_er_c" ] || continue
+      _er_probe="$_er_c/.open-box-wtest.$$"
+      rm -rf "$_er_probe" 2>/dev/null
+      if _er_err=$( ( umask 077; mkdir -p "$_er_probe" ) 2>&1 ); then
+        rmdir "$_er_probe" 2>/dev/null
+        echo "可写检查 $_er_c: 可以建目录"
+      else
+        echo "可写检查 $_er_c: $_er_err"
+      fi
+    done
+    echo "内存: $(awk '/^MemAvailable:/ {printf "%d MB 可用", $2/1024}' /proc/meminfo 2>/dev/null)"
+    _er_tools=""
+    for _er_t in curl wget tar gzip mktemp ss netstat uci nft; do
+      command -v "$_er_t" >/dev/null 2>&1 || _er_tools="$_er_tools $_er_t"
+    done
+    echo "缺少的命令:${_er_tools:- (无)}"
+    echo "----------------------------------------------------"
+  } >&2
+  return 0
+}
+# ---- openbox-env-report:end ----
+
 # ---- openbox-tmp-parent:start ----
 # 这一段在 install.sh / update.sh / uninstall.sh 三份里**一模一样**(三个脚本各自单独 curl 下来跑,
 # 没法共用文件),由 panel/server/system/script-parity.test.mjs 守着逐字相同。
@@ -83,13 +126,23 @@ openbox_pick_tmp_parent() {
 
 drain_stdin() {
   [ -t 0 ] && return 0
-  cat >/dev/null 2>&1
+  # 必须有时间上限:stdin 是一个"开着但永远不来数据也不关"的管道时(从别的脚本里调、
+  # 某些自动化环境),无限制的 cat 会把脚本挂死——本地实测就卡住过。curl | sh 的场景里
+  # 剩下的脚本内容早就排在管道里了,几秒足够读完。
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 3 cat >/dev/null 2>&1
+    return 0
+  fi
+  # 没有 timeout 就退回 read -t(busybox ash 支持;dash 不支持会立刻失败,那就干脆不排空:
+  # 顶多是 curl 再报一次 23,总比挂死强)
+  while IFS= read -r -t 1 _ds_line 2>/dev/null; do :; done
   return 0
 }
 
 die() {
   echo "[open-box] 错误:$*" >&2
   write_status failed "$*"
+  openbox_env_report
   drain_stdin
   exit 1
 }
@@ -162,6 +215,8 @@ check_openwrt() {
   [ -r /etc/openwrt_release ] || die "未检测到 OpenWrt 系统(缺少 /etc/openwrt_release)。"
 }
 
+# 卸载真正开工前打开环境信息(参数错误不打)
+ENV_REPORT_ON=1
 check_root
 check_openwrt
 
