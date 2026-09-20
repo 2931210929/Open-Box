@@ -104,17 +104,19 @@ curl -fsSL https://gh-proxy.com/raw.githubusercontent.com/liandu2024/Open-Box/ma
 ```text
 root@OpenWrt:~# open-box
 
-Open-Box v0.1.210
+Open-Box v0.1.216
   1) 当前密码
-  2) 检查升级
-  3) 退出
-请选择 [1-3]: 1
+  2) 重新启动
+  3) 检查升级
+  4) 卸载
+  5) 退出
+请选择 [1-5]: 1
 
   面板地址: http://192.168.1.1:2026
   当前密码: ********
 ```
 
-只想要密码本身可以直接运行 `open-box password`；`open-box check` 检查有没有新版本，`open-box update` 直接升级。
+只想要密码本身可以直接运行 `open-box password`；`open-box check` 检查有没有新版本，`open-box update` 直接升级，`open-box restart` 重启内核和面板，`open-box uninstall` 卸载。
 
 以上两个入口从 **v0.1.210** 开始提供。更早的版本先通过 SSH 执行下面「升级」一节的命令升到最新版（升级会保留密码、订阅和规则），升级完成后 `open-box` 命令就可以用了。
 

@@ -4,6 +4,11 @@
 # 用法:
 #   sh uninstall.sh           # 停服务、清理系统改动、删除程序文件,保留 data/
 #   sh uninstall.sh --purge   # 同上,但连 data/(数据库、订阅、规则集等)一起删
+#   sh uninstall.sh --detach  # 派生一个后台子进程去真正执行卸载,自己立即返回;进度写进
+#                             # ${TMPDIR:-/tmp}/openbox-uninstall.status,输出写进同名 .log。
+#                             # 给 LuCI 页面用:rpcd 的 fs.exec 是一次有超时的 XHR,而卸载
+#                             # 要停服务、重载防火墙、删几百 MB 文件,同步调用必然先超时
+#                             # (页面上就是「卸载失败:XHR request timed out」,其实后台还在跑)。
 #
 # 系统还原复用 P5 的 /etc/init.d/openbox stop 清理逻辑(摘掉 Open-Box 的 dnsmasq
 # 接管、删 noresolv、移除 IPv6 拦截,且仅在确实接管过时才动 dnsmasq——细节见该
@@ -16,6 +21,12 @@ set -eu
 trap '' PIPE
 
 INSTALL_ROOT="/opt/open-box"
+# 进度文件:LuCI 页面轮询它看卸载走到哪一步(和 update.sh 的 openbox-update.status 同一套写法)。
+# stage 取值:starting / stopping / firewall / files / removing / done / failed
+STATUS_PATH="${TMPDIR:-/tmp}/openbox-uninstall.status"
+UNINSTALL_LOG="${TMPDIR:-/tmp}/openbox-uninstall.log"
+DETACH=0
+STATUS_ON=0
 # 卸载脚本需要先复制一份再删除自身所在目录。/tmp 在升级失败后可能已经被
 # 下载包占满，继续复制到 /tmp 会让“卸载重新安装也不行”变成死循环；默认放到
 # 安装目录所在的持久化分区，也允许用 OPENBOX_TMPDIR 指定其它可写位置。
@@ -24,16 +35,33 @@ PURGE=0
 
 info() { echo "[open-box] $*"; }
 warn() { echo "[open-box] 警告:$*" >&2; }
+
+# 写进度文件(临时文件 + 原子 mv);只有真正干活的那个进程会写(STATUS_ON=1)。
+# 写失败(/tmp 满等)不能让 set -e 把卸载中途杀掉,所以最后总是 return 0
+write_status() {
+  [ "$STATUS_ON" = "1" ] || return 0
+  _ws_tmp="$STATUS_PATH.$$.tmp"
+  {
+    echo "pid=$$"
+    echo "stage=$1"
+    echo "message=${2:-}"
+  } > "$_ws_tmp" 2>/dev/null && mv -f "$_ws_tmp" "$STATUS_PATH" 2>/dev/null
+  return 0
+}
+
 die() {
   echo "[open-box] 错误:$*" >&2
+  write_status failed "$*"
   exit 1
 }
 
 usage() {
   cat <<'EOF'
-用法: sh uninstall.sh [--purge]
+用法: sh uninstall.sh [--purge] [--detach]
 
   --purge     同时删除 /opt/open-box/data(数据库、订阅、规则集等)。默认保留。
+  --detach    交给后台进程执行,自己立即返回;进度写进
+              /tmp/openbox-uninstall.status,输出写进同名 .log。
   -h, --help  显示本帮助
 EOF
 }
@@ -73,12 +101,16 @@ while [ $# -gt 0 ]; do
       PURGE=1
       shift
       ;;
+    --detach)
+      DETACH=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
       ;;
     *)
-      die "未知参数:$1(可用 --help 查看用法)"
+      die "未知参数:$1(可用 --detach、--purge;--help 查看用法)"
       ;;
   esac
 done
@@ -99,10 +131,55 @@ if [ ! -e "$INSTALL_ROOT" ]; then
   exit 0
 fi
 
+# ---------- 被 rpcd 直接调起时,自己补上 --detach ----------
+# 页面那边的 --detach 只对"新页面"生效,而 LuCI 的视图 JS 是浏览器缓存的静态文件:升级之后
+# 用户浏览器里往往还是旧版 status.js,照样同步调用本脚本 —— 真机上就是这么中招的:旧页面报
+# 「XHR request timed out」,后台却把整个安装删干净了。所以这里加一道与页面无关的兜底:父进程
+# 是 rpcd 就当作带了 --detach。这样旧页面拿到的是一个秒回的成功结果,不会再报超时;SSH 下跑
+# (父进程是 shell)行为完全不变,交互问"data 留不留"照旧。
+if [ "$DETACH" = "0" ] && [ "$(cat "/proc/$PPID/comm" 2>/dev/null)" = "rpcd" ]; then
+  DETACH=1
+fi
+
+# ---------- --detach:派生后台子进程,自己立刻返回 ----------
+# 和 update.sh 同一套做法:先把 starting 写进状态文件(页面轮询马上有东西看),再 setsid / nohup
+# 把真正干活的那份放到后台、脱离 fs.exec 的会话,这样 rpcd 那条 XHR 超时、连接被切断也不会打断卸载。
+# 注意自迁移副本($0 在 /opt 下的那份)的删除 trap:派发进程退出时不能删,不然把 worker 的脚本文件删了。
+if [ "$DETACH" = "1" ]; then
+  STATUS_ON=1
+  write_status starting ""
+  STATUS_ON=0
+  trap - EXIT
+  _detach_args=""
+  [ "$PURGE" -eq 1 ] && _detach_args="--purge"
+  if command -v setsid >/dev/null 2>&1; then
+    # shellcheck disable=SC2086
+    setsid sh "$0" $_detach_args >"$UNINSTALL_LOG" 2>&1 </dev/null &
+  elif command -v busybox >/dev/null 2>&1 && busybox setsid true 2>/dev/null; then
+    # shellcheck disable=SC2086
+    busybox setsid sh "$0" $_detach_args >"$UNINSTALL_LOG" 2>&1 </dev/null &
+  else
+    # 没有 setsid 的极简固件:双重 fork + nohup,同样不把 worker 留在前台会话里
+    (
+      (
+        # shellcheck disable=SC2086
+        nohup sh "$0" $_detach_args >"$UNINSTALL_LOG" 2>&1 </dev/null &
+      ) >/dev/null 2>&1 &
+    ) >/dev/null 2>&1 &
+  fi
+  info "卸载已在后台开始,进度见 $STATUS_PATH。"
+  exit 0
+fi
+
+# 到这里就是真正干活的进程(同步调用,或 --detach 派生出来的那个):从现在起写进度
+STATUS_ON=1
+write_status starting ""
+
 # ---------- 停止并禁用两个服务 ----------
 # openbox 的 stop 会顺带做 P5 的安全清理(见文件头注释);restart 才会跳过清理,
 # 这里调用的是普通 stop,清理一定会跑。
 info "停止服务..."
+write_status stopping ""
 if [ -x /etc/init.d/openbox-panel ]; then
   /etc/init.d/openbox-panel stop >/dev/null 2>&1 || true
   /etc/init.d/openbox-panel disable >/dev/null 2>&1 || true
@@ -114,6 +191,7 @@ fi
 
 # ---------- 卸载独有的系统清理:移除面板放行规则 ----------
 info "移除防火墙规则..."
+write_status firewall ""
 if command -v uci >/dev/null 2>&1; then
   # 面板放行、内核 DNS 入站放行、v6 拦截,以及共享网络从 WAN 放行的各服务器端口
   # (firewall.openbox_srv_*)——都是我们写的,一个不留;留着的话以后任何服务占了
@@ -138,8 +216,11 @@ fi
 
 # ---------- 删除 init 脚本与 LuCI 三文件 ----------
 info "删除 init 脚本与 LuCI 文件..."
+write_status files ""
 rm -f /etc/init.d/openbox /etc/init.d/openbox-panel
-rm -f /www/luci-static/resources/view/openbox/status.js
+# main.js 是现名,status.js 是 v0.1.215 及更早的旧名 —— 从老版本升上来的机器上两个都可能在,
+# 一个都不能留(留下的那个会让 LuCI 以为插件还在)。
+rm -f /www/luci-static/resources/view/openbox/main.js /www/luci-static/resources/view/openbox/status.js
 # 目录本身也要删:留着一个空的 openbox/ 目录既不干净,也会让人误以为还装着。
 # 用 rmdir 而不是 rm -rf——只在确实空了的时候删,避免误伤别人的东西。
 rmdir /www/luci-static/resources/view/openbox 2>/dev/null || true
@@ -150,8 +231,8 @@ rm -f /usr/share/rpcd/acl.d/luci-app-openbox.json
 # 用 -rf 而不是 -f:OpenWrt <=22.03 的 Lua 版 LuCI 里 /tmp/luci-modulecache 是
 # 目录,rm -f 对目录返回非零,在 set -eu 下会直接中止脚本(P6 终审 Important 4)。
 rm -rf /tmp/luci-*cache* 2>/dev/null || true
-# rpcd 的重启放到最后一步(见文件末尾):从 LuCI 页面触发卸载时脚本的 stdout 就是 rpcd
-# 的管道,这里一重启 rpcd,后面的任何一句 echo 都会被 SIGPIPE 打死,程序目录还没删。
+# 这里不重启 rpcd(理由见文件末尾):它会清空 LuCI 的全部登录会话,把正在看卸载进度的用户
+# 踢回登录页;而且脚本的 stdout 就是 rpcd 的管道,重启它还会让后面的 echo 吃 SIGPIPE。
 
 # ---------- 数据目录:默认保留,--purge 或交互确认后删除 ----------
 # 通过 curl | sh 运行时 stdin 是脚本内容本身,不能直接 read;因此改问 /dev/tty——
@@ -172,6 +253,7 @@ if [ "$PURGE" -eq 0 ] && [ -e "$INSTALL_ROOT/data" ]; then
   fi
 fi
 
+write_status removing ""
 if [ "$PURGE" -eq 1 ]; then
   info "删除 $INSTALL_ROOT(含数据)..."
   safe_rm_rf "$INSTALL_ROOT"
@@ -206,9 +288,12 @@ for _tmp in "$UNINSTALL_TMP_PARENT"/.open-box-install.* "$UNINSTALL_TMP_PARENT"/
   safe_rm_rf "$_tmp"
 done
 
-# ---------- 最后才重启 rpcd,让 LuCI 忘掉已删除的页面 ----------
-# 到这里该删的都删完了,即使被 SIGPIPE 打死也不会留下半卸载。
-if [ -x /etc/init.d/rpcd ]; then
-  /etc/init.d/rpcd restart >/dev/null 2>&1 || true
-fi
+# ---------- 不重启 rpcd ----------
+# 以前这里会 /etc/init.d/rpcd restart"让 LuCI 忘掉已删除的页面"。实测代价太大:LuCI 的登录
+# 会话全存在 rpcd 内存里,一重启就全没了 —— 用户正看着"正在卸载",页面突然被踢回 OpenWrt
+# 登录页(用户原话:「卸载过程会退出 openwrt?」)。
+# 而且它并不必要:菜单项来自 /usr/share/luci/menu.d 里那个已经被删掉的 json,配合上面清掉的
+# /tmp/luci-*cache*,刷新一下页面就不见了,不需要重启 rpcd。rpcd 内存里残留的那份 ACL 只授权
+# 读/执行几个已经不存在的文件,留到下次重启也无害。
+write_status done ""
 echo ""

@@ -530,9 +530,13 @@ fi
 
 # ---------- LuCI 三文件 ----------
 mkdir -p /www/luci-static/resources/view/openbox || die "无法创建 LuCI 视图目录。"
-cp "$INSTALL_ROOT/openwrt/luci/htdocs/luci-static/resources/view/openbox/status.js" \
-  /www/luci-static/resources/view/openbox/status.js || die "无法安装 LuCI 视图文件。"
-chmod 644 /www/luci-static/resources/view/openbox/status.js 2>/dev/null || true
+# 按目录拷,不写死文件名:视图文件改过一次名(status.js → main.js,为的是绕开浏览器对
+# luci-static 的缓存),以后还可能再改;写死名字的话,新包配上一份旧脚本就会在这里硬失败
+# ——真机上就这么栽过一次:v0.1.216 的包里只有 main.js,而公开分支上还是按 status.js 拷的
+# 旧 install.sh,一键安装直接报"无法安装 LuCI 视图文件"。
+cp "$INSTALL_ROOT/openwrt/luci/htdocs/luci-static/resources/view/openbox/"*.js \
+  /www/luci-static/resources/view/openbox/ || die "无法安装 LuCI 视图文件。"
+chmod 644 /www/luci-static/resources/view/openbox/*.js 2>/dev/null || true
 
 mkdir -p /usr/share/luci/menu.d || die "无法创建 LuCI 菜单目录。"
 cp "$INSTALL_ROOT/openwrt/luci/root/usr/share/luci/menu.d/luci-app-openbox.json" \
@@ -598,7 +602,7 @@ else
 fi
 if [ -n "$OPENBOX_CLI" ]; then
   echo "以后忘了面板密码、或想检查升级:SSH 登上路由器后运行  $OPENBOX_CLI"
-  echo "  (菜单:1 当前密码 / 2 检查升级 / 3 退出;LuCI → 服务 → Open-Box 页面也会显示密码)"
+  echo "  (菜单:1 当前密码 / 2 重新启动 / 3 检查升级 / 4 卸载 / 5 退出;LuCI → 服务 → Open-Box 页面也会显示密码)"
 fi
 echo "如面板无法访问,可在路由器管理界面(LuCI)→ 服务 → Open-Box 中查看/重启服务,或使用紧急停止恢复直连。"
 echo ""

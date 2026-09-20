@@ -1368,9 +1368,13 @@ done
 # ---- swap:end ----
 
 mkdir -p /www/luci-static/resources/view/openbox || warn "无法创建 LuCI 视图目录(不影响面板本身,LuCI 页面可能是旧的)。"
-cp "$INSTALL_ROOT/openwrt/luci/htdocs/luci-static/resources/view/openbox/status.js" \
-  /www/luci-static/resources/view/openbox/status.js || warn "无法安装 LuCI 视图文件(不影响面板本身,LuCI 页面可能是旧的)。"
-chmod 644 /www/luci-static/resources/view/openbox/status.js 2>/dev/null || true
+# 按目录拷,不写死文件名(理由同 install.sh:视图文件会改名来绕开浏览器缓存)
+cp "$INSTALL_ROOT/openwrt/luci/htdocs/luci-static/resources/view/openbox/"*.js \
+  /www/luci-static/resources/view/openbox/ || warn "无法安装 LuCI 视图文件(不影响面板本身,LuCI 页面可能是旧的)。"
+chmod 644 /www/luci-static/resources/view/openbox/*.js 2>/dev/null || true
+# 改名前的老视图文件(v0.1.215 及更早叫 status.js):菜单已经不指它了,留着只会让人
+# 以为还有一个旧页面。面板 init 脚本里也兜了一次,这里顺手清掉。
+rm -f /www/luci-static/resources/view/openbox/status.js 2>/dev/null || true
 
 mkdir -p /usr/share/luci/menu.d || warn "无法创建 LuCI 菜单目录(不影响面板本身,LuCI 页面可能是旧的)。"
 cp "$INSTALL_ROOT/openwrt/luci/root/usr/share/luci/menu.d/luci-app-openbox.json" \
