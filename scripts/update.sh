@@ -131,6 +131,22 @@ openbox_env_report() {
 }
 # ---- openbox-env-report:end ----
 
+# ---- openbox-node-smoke:start ----
+# 随包的 Node 真的能在这台机器上跑起来吗?(GitHub #145)
+# `node -v` 不算数 —— 打版本号在解析参数阶段就返回了,V8 还没初始化;真正跑一句脚本才会暴露
+# 「Check failed: 0 == ret.」这类启动即崩(页大小 / 地址空间 / 内存限制对不上)。不做这一步的话,
+# Node 起不来的机器上安装脚本照样打印"安装完成",用户只看到面板打不开、status 还显示 running
+# (procd 每 5 秒重拉一次),排查要绕一大圈。
+openbox_node_smoke() {
+  _ob_node="$INSTALL_ROOT/node/bin/node"
+  [ -x "$_ob_node" ] || { echo "缺少 $_ob_node"; return 1; }
+  _ob_out=$(LD_LIBRARY_PATH="$INSTALL_ROOT/node/lib" "$_ob_node" -e 'process.stdout.write("ok")' 2>&1)
+  [ "$_ob_out" = "ok" ] && return 0
+  echo "$_ob_out" | head -n 5
+  return 1
+}
+# ---- openbox-node-smoke:end ----
+
 # ---- openbox-tmp-parent:start ----
 # 这一段在 install.sh / update.sh / uninstall.sh 三份里**一模一样**(三个脚本各自单独 curl 下来跑,
 # 没法共用文件),由 panel/server/system/script-parity.test.mjs 守着逐字相同。
@@ -1515,6 +1531,13 @@ rm -rf /tmp/luci-*cache* 2>/dev/null || true
 if [ "$_acl_changed" = "1" ] && [ -x /etc/init.d/rpcd ]; then
   info "rpcd 权限文件有变化,重启 rpcd(LuCI 需要重新登录一次)..."
   /etc/init.d/rpcd restart >/dev/null 2>&1 || warn "重启 rpcd 失败,LuCI 页面权限可能要等下次重启路由器后才生效。"
+fi
+
+info "检查随包 Node 能否运行..."
+if ! _ob_node_err=$(openbox_node_smoke); then
+  warn "随包的 Node 在这台设备上起不来:"
+  [ -n "$_ob_node_err" ] && printf '%s\n' "$_ob_node_err" >&2
+  die "面板跑不起来,升级中止。请把上面几行连同 uname -a、getconf PAGE_SIZE、head -3 /proc/meminfo 的输出发到 GitHub issue。"
 fi
 
 info "启动面板..."
