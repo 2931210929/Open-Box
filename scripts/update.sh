@@ -922,6 +922,10 @@ check_storage() {
 # (df 在个别精简系统上可能对某些挂载点报错),只是提前警示,交给后面真正的下载步骤
 # 决定成败。
 check_tmp_space() {
+  # 先把临时目录挑出来:以前这里在 ensure_tmp_parent 之前跑,TMP_PARENT 还是空串,
+  # free_space_kb_for "" 量的是当前目录(多半是板载 overlay),/opt 挂着大盘的路由器也被
+  # 误报「可用空间不足(约 73MB)」(GitHub #228)。ensure_tmp_parent 幂等,重复调无害
+  ensure_tmp_parent
   tmp_base="$TMP_PARENT"
   kb=$(free_space_kb_for "$tmp_base")
   case "$kb" in
