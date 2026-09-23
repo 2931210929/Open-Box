@@ -17,6 +17,10 @@ OpenWrt 上的一体化透明代理：安装包内置 Open-Box、sing-box 内核
 
 ## 界面
 
+**概览**：四个测试站点的延时和最近几次的走势、连接 / 内存 / 流量的实时曲线、域名过滤统计和按月的流量洞察都在一页上。
+
+![面板概览](docs/pic/overview.webp)
+
 **代理 · 策略**：每个站点集一张卡片，直接看到当前线路和节点健康状态。
 
 ![代理页策略页签](docs/pic/proxies-policies.webp)
@@ -42,9 +46,20 @@ OpenWrt 上的一体化透明代理：安装包内置 Open-Box、sing-box 内核
 
 ![目标分流](docs/pic/settings-policies.webp)
 
+**链式代理**：住宅 / 静态 IP 这类出口指定一个前置节点或节点组，编辑时就能测速、看出口 IP 和归属。
+
+![链式代理](docs/pic/settings-chain-proxy.webp)
+
 **后端设置**：IPv6、测速地址、内核服务和统一组件升级都在这里管理。自动测速会遵守每个策略配置的检测间隔；同一节点在间隔内复用已有结果，超时按策略立即重试或切换。
 
 ![后端设置](docs/pic/settings-backend.webp)
+
+**手机端**：同一个面板，窄屏自动改成单列 / 两列布局，底部导航。
+
+<p>
+  <img src="docs/pic/mobile-overview.webp" alt="手机端概览" width="45%">
+  <img src="docs/pic/mobile-proxies.webp" alt="手机端代理" width="45%">
+</p>
 
 ## 主要功能
 
