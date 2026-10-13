@@ -5,12 +5,15 @@
 
 Open-Box 分两部分：**路由器端**装在路由器 / 主机上，是一体化透明代理——安装包内置 Open-Box、sing-box 内核、Node 运行时以及完整 GeoSite / GeoIP 数据，安装后通过浏览器完成订阅、节点、分流、DNS 和防火墙设置，不需要手写配置文件；**客户端**是手机、电脑上的 Open-Box App，和家里的路由器端配对，在外面也按同一套规则分流。
 
+**Open-Box 自有程序为闭源专有软件，并非开源项目。未经许可禁止复制传播自有代码、再分发、反编译及绕过授权。** 正常安装、离线使用、升级、备份和恢复允许；第三方开源组件保留原许可。详见 [LICENSE](LICENSE) 和 [版权范围](COPYRIGHT.md)。
+
 **支持的平台**
 
 路由器端（同一份安装包、同一条安装命令，脚本自己识别系统），见[路由器端](#路由器端)：
 
 - **OpenWrt**（含 iStoreOS、ImmortalWrt 等衍生固件）：x86_64、aarch64；主路由或旁路由都行，带 LuCI 页面
 - **Debian / Ubuntu**（需要 systemd；Ubuntu 24.04 验证过）：x86_64、aarch64；作为旁路由或只给本机用，没有 LuCI 和 dnsmasq 分流，见[安装](#安装)里的 Debian / Ubuntu 一节
+- **Docker 旁路由**（Linux Docker Engine）：x86_64、aarch64；容器通过 macvlan / ipvlan L2 获取独立 LAN IP，见 [Docker 部署说明](docker/README.md)
 
 客户端（Open-Box App，四个平台同一套界面和功能），见[客户端](#客户端)：
 
@@ -325,7 +328,7 @@ App 常驻任务栏右下角：关掉窗口还在后台，左键点图标打开�
 
 ## 许可证
 
-本仓库公开安装、升级和卸载所需脚本、界面说明图片及发布资产。面板和内核的许可证与版权信息随安装包提供。
+本仓库公开安装、升级、卸载及 Docker 部署所需脚本、使用文档和官方发行版。Open-Box 自有程序适用根目录 [LICENSE](LICENSE)，未经许可禁止复制传播、再分发、反编译、制作换名衍生产品及绕过授权。上游 zashboard 的 MIT 代码、sing-box 内核及其他第三方组件继续遵守各自开源许可证；许可范围及历史许可说明见 [COPYRIGHT.md](COPYRIGHT.md)。
 
 ## Star 增长
 
