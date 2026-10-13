@@ -47,7 +47,7 @@ def api(stage):
 
 def wait_panel():
     for _ in range(45):
-        r = subprocess.run(['docker', 'exec', gateway, 'curl', '-fsS', 'http://127.0.0.1:2026/api/health'], capture_output=True)
+        r = subprocess.run(['docker', 'exec', gateway, 'sh', '-c', 'curl -fsS "http://127.0.0.1:$(cat /opt/open-box/data/panel-port)/api/health"'], capture_output=True)
         if r.returncode == 0:
             return
         time.sleep(1)

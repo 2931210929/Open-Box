@@ -13,7 +13,7 @@ Open-Box 分两部分：**路由器端**装在路由器 / 主机上，是一体�
 
 - **OpenWrt**（含 iStoreOS、ImmortalWrt 等衍生固件）：x86_64、aarch64；主路由或旁路由都行，带 LuCI 页面
 - **Debian / Ubuntu**（需要 systemd；Ubuntu 24.04 验证过）：x86_64、aarch64；作为旁路由或只给本机用，没有 LuCI 和 dnsmasq 分流，见[安装](#安装)里的 Debian / Ubuntu 一节
-- **Docker 旁路由**（Linux Docker Engine）：x86_64、aarch64；容器通过 macvlan / ipvlan L2 获取独立 LAN IP，见 [Docker 部署说明](docker/README.md)
+- **Docker 旁路由**（Linux Docker Engine）：x86_64、aarch64；容器通过 macvlan / ipvlan L2 获取独立 LAN IP，支持一键安装、离线镜像和 `docker run`；新装默认端口 3036，升级保留原端口，见 [Docker 部署说明](docker/README.md)
 
 客户端（Open-Box App，四个平台同一套界面和功能），见[客户端](#客户端)：
 

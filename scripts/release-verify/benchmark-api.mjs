@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 const [stage, fixture] = process.argv.slice(2)
-const base = 'http://127.0.0.1:2026'
+const port = readFileSync('/opt/open-box/data/panel-port', 'utf8').trim()
+const base = `http://127.0.0.1:${port}`
 const password = 'isolated-performance-fixture'
 const login = await fetch(`${base}/api/auth/${stage === 'seed' ? 'setup' : 'login'}`, {
   method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password }),
