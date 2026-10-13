@@ -650,9 +650,11 @@ probe_mirror_prefix() {
 # 用的环境变量意外影响到——哪怕那两个环境变量出于任何原因残留在调用者的环境里,
 # --probe/--cancel 也必须表现得像它们完全不存在一样。
 _probe_or_cancel_scan=0
+_channel_cli_scan=0
 for _a in "$@"; do
   case "$_a" in
-    --probe|--cancel) _probe_or_cancel_scan=1; break ;;
+    --probe|--cancel) _probe_or_cancel_scan=1 ;;
+    --direct|--mirror) _channel_cli_scan=1 ;;
   esac
 done
 
@@ -709,7 +711,9 @@ EXPECT_VERSION="${OPENBOX_UPDATE_EXPECT:-}"
 # 互斥检查会把 CHANNEL_OVERRIDE 非空误判成命令行传了 --direct/--mirror,平白 die()
 # 掉一次跟路线选择毫无关系的探测/取消调用。--probe/--cancel 是一次性只读调用,
 # 犯不着担这个风险,直接不读环境变量最干脆。
-if [ "$_probe_or_cancel_scan" != "1" ]; then
+# 获取最新脚本时，旧 worker 会同时留下渠道环境变量和显式参数。显式参数优先，
+# 只有不带渠道参数的 --detach 子进程才从环境读回；互斥检查仍针对命令行里的重复选择。
+if [ "$_probe_or_cancel_scan" != "1" ] && [ "$_channel_cli_scan" != "1" ]; then
   CHANNEL_OVERRIDE="${OPENBOX_UPDATE_CHANNEL_OVERRIDE:-}"
   case "$CHANNEL_OVERRIDE" in
     ''|direct|mirror) ;;
