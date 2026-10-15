@@ -9,6 +9,47 @@
 3. 同步源码工作区的 `panel/server/defaults/tutorial-videos.json`，使新安装及离线首次打开也有相同的教程列表；在提交和打包前完成。
 4. 发布后读回 GitHub 公开分支的 README，确认新增链接已公开。若本次无法访问频道，记录「未完成检查」及原因，不将网络失败当成没有新视频。
 
+## 每次发版前：Geo 数据及多语种说明
+
+先比较 `MetaCubeX/meta-rules-dat` 的 `sing` 分支与随包清单；有更新时下载、校验并冻结同一提交。不要用显式缓存目录绕过检查，网络失败不能视为“没有更新”。Geo 准备及分类更新应在提交源码和构建前完成：
+
+```sh
+python3 scripts/bundle-geodata.py .build-cache/geodata
+node panel/scripts/gen-geo-catalog.mjs --geo-dir .build-cache/geodata
+python3 scripts/bundle-geodata.py .build-cache/geodata --check-current
+node panel/scripts/gen-geo-catalog.mjs --geo-dir .build-cache/geodata --check
+python3 scripts/check-geodata.py .build-cache/geodata panel/.tools/sing-box 1.14.1
+node --test panel/scripts/geo-catalog.test.mjs
+```
+
+Node 使用 24。生成器按该快照的文件清单生成分类，不再向另一个仓库取名单；保留已校对的简体、繁体、英文说明。新分类缺少说明时停止，先补齐 `GEO_NOTES_JSON`（格式见生成器），不能仅用分类名冒充说明。`@ads`、`@cn`、`@!cn`、`@telemetry` 等子集的组合说明也要能搜索。
+
+记录上游提交、时间、数量与变更情况。双架构路由器和本次更新的客户端均指定同一 `OPENBOX_GEO_BUNDLE_DIR`；Docker 使用对应路由器完整包。仅发布客户端也执行上面检查。路由器打包脚本会再次检查上游及分类版本。已发布版本的二进制不原地替换；Geo 更新进入下一次构建和新版本。
+
+## 发布说明与客户端下载
+
+正文以本次用户可感知的改动为主，保留必要兼容提示，省略完整测试流水和内部构建细节。响应 issue 的条目标注 `#编号`，并准确限定修复范围。GitHub 正文、`release-notes.md` 和 `.sha256` 同步更新。
+
+每次提供各平台最近正式版的实际安装包链接，尤其是本次没有客户端或仅更新部分平台时。客户端版本取安装包文件名，不能把旧客户端标成本次路由器版本；没有公开 iOS 安装包就不要编造链接。
+
+## 每次发版后：只保留最近 10 个 Release
+
+公开下载安装验收完成后，先生成计划，再执行维护：
+
+```sh
+python3 scripts/release-verify/release-maintenance.py
+python3 scripts/release-verify/release-maintenance.py --apply
+```
+
+需要精简当前正式版说明时，用 `--notes-file <正文文件>` 配合 `--apply`；维护脚本会补齐客户端下载区，并同步正文、说明附件及 SHA256。
+
+- 按发布时间保留最近 10 个已发布 Release，草稿不计入也不删除。
+- 按安装包中的版本号定位各平台最新正式版客户端。如果仅在待删版本中，先将安装包及校验文件原样复制到保留的最新正式版；核对下载前后 SHA256 和大小，版本与文件名不变。
+- 更新最新正式版的客户端下载链接，再读回确认客户端均已在保留范围内，最后删除旧 Release。复制、校验、链接更新失败或过程中版本清单变化时停止，不继续删除。
+- 清理后读回数量和客户端下载位置；Git 标签保留。当前已有不足 10 个版本时不补造版本。
+
+维护脚本的无网络测试：`python3 scripts/release-verify/release-maintenance.test.py`。
+
 ## 内存与吞吐基准
 
 基准脚本仅用于测试，不进入面板运行流程。`bench-net/main.go` 是标准库实现的本地 HTTP/DNS 数据源和计数客户端，需用 Go 编译为目标 Linux 架构；它不访问外网。
