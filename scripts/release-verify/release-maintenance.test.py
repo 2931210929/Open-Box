@@ -48,6 +48,34 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(m.with_client_links(body, latest), body)
         self.assertIn('open-box-android-0.1.10.apk', body)
         self.assertIn('Fix #577', body)
+        self.assertNotIn('<!--', body)
+
+    def test_legacy_markers_are_removed_and_following_sections_preserved(self):
+        latest = m.client_assets([release(2, '0.1.10')])
+        body = 'Fix #577\n\n' + m.START + '\n### 客户端下载\n\n- old link\n' + m.END + '\n\n## 安装说明\nKeep this.\n'
+        updated = m.with_client_links(body, latest)
+        self.assertNotIn('openbox-client-downloads', updated)
+        self.assertNotIn('old link', updated)
+        self.assertIn('## 安装说明\nKeep this.', updated)
+        self.assertEqual(updated.count('### 客户端下载'), 1)
+        self.assertEqual(m.with_client_links(updated, latest), updated)
+
+    def test_marker_free_links_are_updated_without_duplicate_sections(self):
+        old = m.with_client_links('Fix\n', m.client_assets([release(1, '0.1.9')]))
+        updated = m.with_client_links(old, m.client_assets([release(2, '0.1.10')]))
+        self.assertNotIn('0.1.9', updated)
+        self.assertIn('0.1.10', updated)
+        self.assertEqual(updated.count('### 客户端下载'), 1)
+
+    def test_legacy_migration_preserves_text_outside_the_marked_section(self):
+        body = 'Changes\n' + m.START + '\n### 客户端下载\n- old\n' + m.END + '\nOther notes.\n'
+        updated = m.with_client_links(body, m.client_assets([release(2, '0.1.10')]))
+        self.assertTrue(updated.startswith('Changes\n'))
+        self.assertTrue(updated.endswith('Other notes.\n'))
+
+    def test_unclosed_legacy_section_still_stops_maintenance(self):
+        with self.assertRaisesRegex(ValueError, 'Unclosed'):
+            m.with_client_links('Fix\n' + m.START, {})
 
     def test_incomplete_copy_inside_window_blocks_deletion(self):
         rs = [release(i, '0.1.10' if i in (1, 11) else None) for i in range(1, 12)]

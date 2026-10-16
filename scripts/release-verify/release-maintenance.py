@@ -62,17 +62,21 @@ def plan(releases, keep=10):
 
 
 def with_client_links(body, latest):
-    lines = [START, '### 客户端下载', '']
+    # Older panels render HTML comments literally. Keep public notes marker-free,
+    # and use the visible heading to replace this section on subsequent runs.
+    lines = ['### 客户端下载', '']
     for platform, item in latest.items():
         asset = item['asset']
         version = re.fullmatch(CLIENTS[platform], asset['name'])[1]
         lines.append(f"- [{platform} · {version}]({asset['browser_download_url']})")
-    lines.append(END)
     section = '\n'.join(lines)
     if START in body:
         if END not in body:
             raise ValueError('Unclosed client download section')
         return re.sub(re.escape(START) + r'.*?' + re.escape(END), lambda _: section, body, flags=re.S).strip() + '\n'
+    heading = r'^### 客户端下载[ \t]*(?:\r?\n|$)[\s\S]*?(?=^#{1,3}[ \t]+|\Z)'
+    if re.search(heading, body, flags=re.M):
+        return re.sub(heading, lambda _: section + '\n\n', body, count=1, flags=re.M).strip() + '\n'
     return body.rstrip() + '\n\n' + section + '\n'
 
 
