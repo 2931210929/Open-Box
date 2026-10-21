@@ -1,5 +1,16 @@
 # 发布前验收
 
+## 提交前：本地门禁
+
+私有源码不推 GitHub，托管 CI 不会运行。提交或构建候选版本前，先在源码工作区执行：
+
+```sh
+sh scripts/preflight.sh          # git diff --check、Go 测试、面板全部测试、vue-tsc
+sh scripts/preflight.sh --quick  # 跳过 vue-tsc，适合只改后端的快速检查
+```
+
+`--quick` 不能替代发版前的完整回归；真正的发布验收仍按下文逐项执行。
+
 ## 每次发版前：检查 YouTube 教程
 
 路由器端或客户端每次发版前，都检查[安格视界频道的最新视频](https://www.youtube.com/@Ange-Digital-Life/videos?hl=zh-CN)，不能只依赖面板的动态教程列表。
@@ -100,6 +111,10 @@ OPENBOX_VERSION=v0.1.266 ... sh scripts/build-release.sh arm64 <产物目录>
 
 ## 2. 发布前验收(Release 还没建)
 
+发布目录必须包含 `install.sh`、`update.sh`、`uninstall.sh` 及各自的 `.sha256`，不能只检查安装包。
+`update.sh` 与完整安装包内的同名文件必须字节一致；旧版面板会先请求
+`releases/latest/download/update.sh`，缺少这个独立资产会在下载升级包之前失败，关闭 FakeIP 无效。
+
 1. 本机起假镜像,把产物目录当 GitHub Release 的镜像前缀提供出去:
 
    ```sh
@@ -115,7 +130,7 @@ OPENBOX_VERSION=v0.1.266 ... sh scripts/build-release.sh arm64 <产物目录>
 
    验:版本号、meta.json 里的源码提交、面板 `/api/health`、命令行、LuCI 视图 / glibc Node、没有残留 `.old`、内核起得来、本机上网。
 
-3. 升级路径(从当前公开版本升到新版本,用新的 update.sh):
+3. 升级路径(从当前公开版本升到新版本,从 Release 资产入口取新的 update.sh):
 
    ```sh
    sh scripts/release-verify/run-host.sh ubuntu23 upgrade MIRROR=http://192.168.3.9:8765 TAG=v0.1.266
@@ -143,9 +158,16 @@ OPENBOX_VERSION=v0.1.266 ... sh scripts/build-release.sh arm64 <产物目录>
 
 `gh release create` 上传产物,附件里再带一份 `release-notes.md`(和发布说明同一份:面板「发现新版本」弹窗取更新日志时
 先直连 GitHub API,不通才从镜像取这个附件,见 panel/server/system/updater.mjs 的 fetchReleaseNotes);同步公开分支(README 一键安装拉的是它);
+公开说明不加入内部 HTML 注释标记（旧版面板会原样显示）；客户端下载区块以 `### 客户端下载` 标题维护。验收时检查升级弹窗实际内容，而不只看 GitHub 的 Markdown 渲染。
 等镜像缓存跟上之后:
 
 ```sh
+curl -fsSL https://github.com/liandu2024/Open-Box/releases/latest/download/update.sh -o /tmp/openbox-release-update.sh
+curl -fsSL https://github.com/liandu2024/Open-Box/releases/latest/download/update.sh.sha256 -o /tmp/openbox-release-update.sh.sha256
+sh -n /tmp/openbox-release-update.sh
 sh scripts/release-verify/run-host.sh openbox-dev install MIRROR=https://ghfast.top TAG=v0.1.266
 sh scripts/release-verify/run-host.sh ubuntu23 install MIRROR=https://ghfast.top TAG=v0.1.266
 ```
+
+核对上述公开下载脚本与发布目录中的 `update.sh` SHA256 相同，并检查远端 Release 资产清单包含三份独立脚本及校验文件。
+还要从上一正式版的**已安装升级入口**启动一次升级，覆盖它先获取最新脚本再接力执行的过程；仅手动运行新脚本不能替代这项验证。
