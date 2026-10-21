@@ -47,4 +47,28 @@ Geo 上游实时检查为 `24a931c326f2a4765eb8320fae1255b2baa0d53a`（2026-10-2
 
 ## 公开产物
 
-计划发布 46 个资产，正文与 `release-notes.md` 及 SHA256 保持一致；本次客户端继续提供 v0.1.340 Release 中最近正式版 0.1.330 的实际安装包链接。公开下载及发布维护的实际结果在完成后补录。
+[v0.1.344 已正式发布](https://github.com/liandu2024/Open-Box/releases/tag/v0.1.344)，46 个资产的服务端 SHA256、大小、上传状态与本地产物逐项一致。实际从公开地址下载 x64/arm64 完整包、两架构 Docker 镜像、组件清单、独立脚本、说明及校验文件，共 33 个文件，摘要全部一致；两个架构公开安装包中的升级脚本也与独立资产相同。
+
+GitHub 直连和 ghfast 镜像的 `releases/latest/download/update.sh` 均为 HTTP 200 / TLS 校验 0，取得新版 `8548b0b0…` 脚本。公开 README 的 6 条教程及随包列表、三个安装/升级/卸载脚本已读回核对。
+
+OpenWrt 与 Ubuntu 重新通过公开安装命令完成安装、启动、上网及原数据恢复，最终读回源码提交与绑定程序摘要正确。开发路由器再次从 v0.1.343 和正式机同款旧入口出发，GitHub 强制命中 FakeIP，脚本及升级内容取自公开 ghfast 通道，完整升级到 v0.1.344；状态 done、内核自动恢复，原 profile 和下载通道还原。
+
+Ubuntu 运行中的 `/api/openbox/update/notes?latest=v0.1.344` 从公开镜像取得说明，与最终发布正文一致。升级弹窗实际使用的前端解析器检查通过：6 个列表项、4 个客户端实际下载链接，无维护注释残留。
+
+发布维护后，GitHub 正文、release-notes.md 附件及 SHA256 再次核对一致，全部 46 个资产的服务端摘要再次通过。保留最近 10 个已发布 Release（v0.1.344 至 v0.1.335），仅删除 v0.1.334 的 Release，已读回确认其 Git 标签仍在。Android、macOS、Windows、Linux 最近正式版均为 0.1.330，原安装包和校验文件仍位于保留的 v0.1.340，无需搬迁，客户端下载链接继续指向这些实际文件。
+
+## Issue 巡检与跟进
+
+发送前重新获取完整讨论，与已审阅的正文、评论及附件核对，避免忽略新信息或重复评论。本轮跟进 7 条近期未回复故障和 4 条新增补充讨论，回复后读回正文与状态；以下 11 条均保持打开，没有把本次升级修复当成其它问题已解决：
+
+- [#686 回复](https://github.com/liandu2024/Open-Box/issues/686#issuecomment-6310138783)
+- [#681 回复](https://github.com/liandu2024/Open-Box/issues/681#issuecomment-6310140098)
+- [#680 回复](https://github.com/liandu2024/Open-Box/issues/680#issuecomment-6310141548)
+- [#679 回复](https://github.com/liandu2024/Open-Box/issues/679#issuecomment-6310142833)
+- [#678 回复](https://github.com/liandu2024/Open-Box/issues/678#issuecomment-6310143921)
+- [#669 回复](https://github.com/liandu2024/Open-Box/issues/669#issuecomment-6310145060)
+- [#668 回复](https://github.com/liandu2024/Open-Box/issues/668#issuecomment-6310146137)
+- [#659 回复](https://github.com/liandu2024/Open-Box/issues/659#issuecomment-6310147228)
+- [#663 回复](https://github.com/liandu2024/Open-Box/issues/663#issuecomment-6310148306)
+- [#661 回复](https://github.com/liandu2024/Open-Box/issues/661#issuecomment-6310149399)
+- [#658 回复](https://github.com/liandu2024/Open-Box/issues/658#issuecomment-6310150503)
