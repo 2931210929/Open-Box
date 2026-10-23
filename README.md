@@ -255,6 +255,8 @@ Open-Box App 把家里路由器端的分流规则带到手机、电脑上：在�
 
 安装包都在 [Releases](https://github.com/liandu2024/Open-Box/releases)：`open-box-android-<版本>.apk`、`open-box-macos-<版本>-arm64.dmg`、`open-box-windows-<版本>-x64-setup.exe`、`open-box-desktop-linux-<版本>-amd64.deb`，也可以在面板「设置 → 客户端」最上面的「客户端下载」里直接点。客户端只在有更新时随版本发布；最新版没带的话，它的版本说明末尾「客户端下载」一节有最新安装包的链接，也可以在 Releases 列表里往前找。
 
+客户端「设置 → 配置」中，检测到配对失效或配对码已更换时，配置名称右侧会显示红色「！」。点击可查看原因并同步，输入正确的新配对码、同步成功后警告自动消失；本地分流和节点分流都支持。
+
 ### Android 客户端
 
 - **系统要求**：Android 12 及以上、64 位 ARM。
