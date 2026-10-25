@@ -1,6 +1,6 @@
 # Open-Box Docker 旁路由
 
-在 Linux Docker Engine 上运行，与 OpenWrt / Debian 版使用同一套面板、客户端引擎和 tcp29 内核。
+在 Linux Docker Engine 上运行，与 OpenWrt / Debian 版使用同一套面板、客户端引擎和 tcp31 内核。
 容器通过 macvlan 或 ipvlan L2 获得独立局域网 IP。终端的 IPv4 网关和 DNS 指向容器后，由容器执行分流。
 v0.1.346 提供 x64 和 arm64 镜像下载包，包含与同版本路由器包一致的 Go 原生配置/分流核心。镜像通过 GitHub Release 分发，下载后使用 `docker load` 加载。
 
