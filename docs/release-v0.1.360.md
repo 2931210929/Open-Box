@@ -9,6 +9,6 @@
 ### 客户端下载
 
 - [Android · 0.1.359](https://github.com/liandu2024/Open-Box/releases/download/v0.1.359/open-box-android-0.1.359.apk)
+- [Linux amd64 · 0.1.359](https://github.com/liandu2024/Open-Box/releases/download/v0.1.359/open-box-desktop-linux-0.1.359-amd64.deb)
 - [macOS arm64 · 0.1.359](https://github.com/liandu2024/Open-Box/releases/download/v0.1.359/open-box-macos-0.1.359-arm64.dmg)
 - [Windows x64 · 0.1.359](https://github.com/liandu2024/Open-Box/releases/download/v0.1.359/open-box-windows-0.1.359-x64-setup.exe)
-- [Linux amd64 · 0.1.359](https://github.com/liandu2024/Open-Box/releases/download/v0.1.359/open-box-desktop-linux-0.1.359-amd64.deb)
