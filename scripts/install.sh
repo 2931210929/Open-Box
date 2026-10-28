@@ -169,7 +169,7 @@ cleanup_partial_install() {
   else
     rm -f /etc/init.d/openbox /etc/init.d/openbox-panel
     rm -rf /www/luci-static/resources/view/openbox /tmp/luci-*cache* 2>/dev/null || true
-    rm -f /usr/share/luci/menu.d/luci-app-openbox.json /usr/share/rpcd/acl.d/luci-app-openbox.json
+    rm -f /usr/share/luci/menu.d/luci-app-openbox.json /usr/share/rpcd/acl.d/luci-app-openbox.json /usr/lib/lua/luci/controller/openbox_compat.lua
   fi
   if [ -n "${CLI_LINK:-}" ] && [ -L "$CLI_LINK" ] && [ "$(readlink "$CLI_LINK" 2>/dev/null)" = "$INSTALL_ROOT/openwrt/bin/open-box" ]; then
     rm -f "$CLI_LINK"
@@ -516,7 +516,7 @@ info "面板端口:$PANEL_PORT"
 # 终端)。这里按"功能是否可用"检查(模块可能直接编进内核,不看包名),缺的就地用 opkg / apk 装;装不上
 # 只警告不中断——面板和内核在缺项下各有明确提示,不该因为软件源不通就装不了 Open-Box。
 #   kmod-tun           tun 设备,内核起不来的硬要求
-#   kmod-nft-queue     auto_redirect(nftables 转发)的 queue 表达式,缺了内核退到纯 tun 兼容模式
+#   kmod-nft-queue     首包预判的 queue 表达式,缺了只关闭预判,仍保留 auto_redirect
 #   kmod-nft-nat       auto_redirect 的 redirect 表达式(fw4 默认自带,顺手核对)
 #   kmod-veth ip-full  规则页「真实路由 · 模拟 LAN 终端」要建网络命名空间和 veth
 #   ca-bundle          HTTPS 证书(订阅、更新下载)
@@ -551,14 +551,10 @@ dep_pkg() {
 dep_effect() {
   case "$1" in
     kmod-tun) echo "内核起不来(没有 tun 设备)" ;;
-    # 2026-09-30 开发路由器实测(内核 1.14.1 / sing-tun 0.9.3):两个 queue 模块都没有时 nftables 转发照常,只关掉首包预判;
-    # 有 nfnetlink_queue、缺 nft_queue 时 nft 规则装不上,内核自动降级纯 tun
+    # queue 是首包预判的可选能力;tcp31 已单独探测表达式,不可用时仍保留 auto_redirect。
+    # 核心自用的上游 DNS 由 entry-bypass 的 output 防循环规则保护,与预判无关。
     kmod-nft-queue)
-      if [ -d "$DEP_SYS_MODULE/nfnetlink_queue" ] || modprobe nfnetlink_queue >/dev/null 2>&1; then
-        echo "nftables 转发起不来,内核会自动改用纯 tun 兼容模式,吞吐低一些"
-      else
-        echo "只影响入口的「首包预判放行」(直连终端、节点地址的连接先进内核再直连出去),nftables 转发和其它功能照常"
-      fi
+      echo "只影响入口的「首包预判放行」,仍保留 nftables 转发;内核自用 DNS 由防循环规则保护"
       ;;
     kmod-nft-nat) echo "auto_redirect 转发规则加不上,退到兼容模式" ;;
     kmod-veth|ip-full) echo "规则页不能模拟 LAN 终端(可改用内核诊断)" ;;
@@ -1226,6 +1222,10 @@ mkdir -p /usr/share/luci/menu.d || die "无法创建 LuCI 菜单目录。"
 cp "$INSTALL_ROOT/openwrt/luci/root/usr/share/luci/menu.d/luci-app-openbox.json" \
   /usr/share/luci/menu.d/luci-app-openbox.json || die "无法安装 LuCI 菜单文件。"
 chmod 644 /usr/share/luci/menu.d/luci-app-openbox.json 2>/dev/null || true
+if [ -f "$INSTALL_ROOT/openwrt/bin/luci-compat.sh" ]; then
+  . "$INSTALL_ROOT/openwrt/bin/luci-compat.sh"
+  openbox_install_luci_compat "$INSTALL_ROOT" || warn "无法安装 Lua LuCI 兼容入口,请直接访问 Open-Box 面板。"
+fi
 
 mkdir -p /usr/share/rpcd/acl.d || die "无法创建 rpcd ACL 目录。"
 # 先比对再覆盖:重启 rpcd 会清空它内存里的全部 LuCI 会话(等于把人踢回登录页),

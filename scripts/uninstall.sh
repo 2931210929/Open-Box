@@ -356,6 +356,7 @@ rm -f /www/luci-static/resources/view/openbox/main.js /www/luci-static/resources
 # 用 rmdir 而不是 rm -rf——只在确实空了的时候删,避免误伤别人的东西。
 rmdir /www/luci-static/resources/view/openbox 2>/dev/null || true
 rm -f /usr/share/luci/menu.d/luci-app-openbox.json
+rm -f /usr/lib/lua/luci/controller/openbox_compat.lua
 rm -f /usr/share/rpcd/acl.d/luci-app-openbox.json
 # 命令行 open-box:只删我们自己建的那个软链接,别人放在那里的真文件不动
 [ -L /usr/bin/open-box ] && rm -f /usr/bin/open-box
